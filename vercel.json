@@ -1,0 +1,1 @@
+{"rewrites":[{"source":"/kaden","destination":"/index.html"},{"source":"/kendall","destination":"/index.html"},{"source":"/(.*)","destination":"/index.html"}]}
