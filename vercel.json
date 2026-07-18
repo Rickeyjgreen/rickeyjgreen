@@ -1,1 +1,1 @@
-{"rewrites":[{"source":"/kaden","destination":"/index.html"},{"source":"/kendall","destination":"/index.html"},{"source":"/(.*)","destination":"/index.html"}]}
+{"rewrites":[{"source":"/talent","destination":"/talent/index.html"},{"source":"/talent/","destination":"/talent/index.html"},{"source":"/film","destination":"/film/index.html"},{"source":"/film/","destination":"/film/index.html"},{"source":"/kaden","destination":"/index.html"},{"source":"/kendall","destination":"/index.html"},{"source":"/(.*)","destination":"/index.html"}]}
