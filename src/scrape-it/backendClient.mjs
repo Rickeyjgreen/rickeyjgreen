@@ -1,11 +1,12 @@
 // Public client configuration only. The publishable key is intentionally safe for browser use;
-// all database tables deny anon/auth access and the Edge Function constrains allowed operations.
+// all database tables deny anon/auth access and constrained Edge Functions perform approved operations.
 const PROJECT_URL = 'https://eyngapizkxsernywdyfv.supabase.co'
 const PUBLISHABLE_KEY = 'sb_publishable_Iyht5_rKaUOeHBz9sh0xRQ_eX6r8tfc'
-const API_URL = `${PROJECT_URL}/functions/v1/scrape-it-api`
+const SCRAPE_API_URL = `${PROJECT_URL}/functions/v1/scrape-it-api`
+const DEALER_API_URL = `${PROJECT_URL}/functions/v1/dealer-intel-api`
 
-async function callApi(payload) {
-  const response = await fetch(API_URL, {
+async function callApi(url, payload) {
+  const response = await fetch(url, {
     method: 'POST',
     headers: {
       apikey: PUBLISHABLE_KEY,
@@ -19,13 +20,25 @@ async function callApi(payload) {
 }
 
 export function loadBackendState(query) {
-  return callApi({ operation: 'state', query })
+  return callApi(SCRAPE_API_URL, { operation: 'state', query })
 }
 
 export function runApprovedSource(query) {
-  return callApi({ operation: 'refresh', query })
+  return callApi(SCRAPE_API_URL, { operation: 'refresh', query })
 }
 
 export function submitFeedback(actionId, feedbackStatus, outcomeNote = '') {
-  return callApi({ operation: 'feedback', actionId, feedbackStatus, outcomeNote })
+  return callApi(SCRAPE_API_URL, { operation: 'feedback', actionId, feedbackStatus, outcomeNote })
+}
+
+export function loadDealerState() {
+  return callApi(DEALER_API_URL, { operation: 'state' })
+}
+
+export function scanDealerInventory(dealerId) {
+  return callApi(DEALER_API_URL, { operation: 'scan', dealerId })
+}
+
+export function scanDealerBatch(dealerIds) {
+  return callApi(DEALER_API_URL, { operation: 'scan_batch', dealerIds })
 }
