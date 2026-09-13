@@ -1,6 +1,6 @@
 const P='https://eyngapizkxsernywdyfv.supabase.co'
 const KEY='sb_publishable_Iyht5_rKaUOeHBz9sh0xRQ_eX6r8tfc'
-const DEALER_API=`${P}/functions/v1/dealer-intel-api`
+const DEALER_STATE=`${P}/functions/v1/dealer-intel-state-v2`
 const CONTROL_API=`${P}/functions/v1/scrape-control-api`
 const UA='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/152 Safari/537.36'
 const role=/(dealer principal|dealer operator|owner|president|general manager|general sales manager|gsm\b|new car manager|new vehicle manager|used car manager|used vehicle manager|inventory manager|fleet manager|commercial manager|sales manager|internet manager|bdc manager|business development manager|variable operations|general sales)/i
@@ -10,8 +10,8 @@ const uniq=a=>[...new Set(a)]
 const clean=s=>(s||'').replace(/&nbsp;/gi,' ').replace(/&amp;/gi,'&').replace(/&#39;/g,"'").replace(/&quot;/gi,'"').replace(/\s+/g,' ').trim()
 const plausibleName=s=>/^[A-Za-z][A-Za-z'’.\-]+(?:\s+[A-Za-z][A-Za-z'’.\-]+){1,3}$/.test(clean(s))
 function common(base){return ['/staff/','/team/','/about-us/','/meet-our-staff/','/meet-the-team/','/management/','/leadership/','/contact-us/','/contact/'].map(p=>new URL(p,base).toString())}
-async function call(payload){const r=await fetch(CONTROL_API,{method:'POST',headers:{apikey:KEY,'content-type':'application/json'},body:JSON.stringify(payload),signal:AbortSignal.timeout(15000)});const d=await r.json().catch(()=>({}));if(!r.ok||d.error)throw Error(d.error||`Control API HTTP ${r.status}`);return d}
-async function dealerState(){const r=await fetch(DEALER_API,{method:'POST',headers:{apikey:KEY,'content-type':'application/json'},body:JSON.stringify({operation:'state'}),signal:AbortSignal.timeout(15000)});const d=await r.json().catch(()=>({}));if(!r.ok||d.error)throw Error(d.error||`Dealer state HTTP ${r.status}`);return d.dealers||[]}
+async function call(payload){const r=await fetch(CONTROL_API,{method:'POST',headers:{apikey:KEY,'content-type':'application/json'},body:JSON.stringify(payload),signal:AbortSignal.timeout(15000)});const d=await r.json().catch(()=>({}));if(!r.ok||d.error)throw Error(typeof d.error==='string'?d.error:JSON.stringify(d.error||{})||`Control API HTTP ${r.status}`);return d}
+async function dealerState(){const r=await fetch(DEALER_STATE,{method:'POST',headers:{apikey:KEY,'content-type':'application/json'},body:JSON.stringify({operation:'state'}),signal:AbortSignal.timeout(15000)});const d=await r.json().catch(()=>({}));if(!r.ok||d.error)throw Error(typeof d.error==='string'?d.error:JSON.stringify(d.error||{})||`Dealer state HTTP ${r.status}`);return d.dealers||[]}
 async function fetchHtml(url){const r=await fetch(url,{redirect:'follow',headers:{'user-agent':UA,accept:'text/html,application/xhtml+xml'},signal:AbortSignal.timeout(14000)});if(!r.ok)throw Error(`HTTP ${r.status}`);if(!same(r.url,url))throw Error('Off-host redirect');return{url:r.url,html:await r.text()}}
 function links(html,base){const out=[];for(const m of html.matchAll(/<a\b[^>]*href=["']([^"']+)["'][^>]*>([\s\S]*?)<\/a>/gi)){try{const u=new URL(m[1],base).toString(),label=clean(m[2].replace(/<[^>]+>/g,' '));if(same(u,base)&&/(staff|team|management|leadership|about|contact|employee)/i.test(`${u} ${label}`))out.push(u)}catch{}}return uniq(out)}
 function textLines(html){return html.replace(/<script\b[\s\S]*?<\/script>/gi,' ').replace(/<style\b[\s\S]*?<\/style>/gi,' ').replace(/<(?:br|\/p|\/div|\/li|\/article|\/section|h[1-6])\b[^>]*>/gi,'\n').replace(/<[^>]+>/g,' ').split(/\n+/).map(clean).filter(Boolean)}
