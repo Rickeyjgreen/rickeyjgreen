@@ -1,6 +1,7 @@
 const PROJECT_URL='https://eyngapizkxsernywdyfv.supabase.co'
 const INGEST_URL=`${PROJECT_URL}/functions/v1/vin-reference-ingest`
 const VPIC='https://vpic.nhtsa.dot.gov/api/vehicles/DecodeVINValuesBatch/'
+const WORKER_VERSION='2.1'
 const BATCH=50
 const ROUND_LIMIT=Math.max(50,Math.min(1000,Number(process.env.VIN_ENRICH_ROUND_LIMIT||1000)))
 const MAX_ROUNDS=Math.max(1,Math.min(10,Number(process.env.VIN_ENRICH_MAX_ROUNDS||5)))
@@ -23,6 +24,7 @@ async function decode(vins){
   const d=await r.json().catch(()=>({}));if(!r.ok||!Array.isArray(d.Results))throw Error(`vPIC ${r.status}`);return d.Results
 }
 
+console.log(`VIN enrichment worker ${WORKER_VERSION}`)
 const token=await oidc()
 let decoded=0,failed=0,seen=0,rounds=0
 for(let round=1;round<=MAX_ROUNDS;round++){
@@ -50,5 +52,5 @@ for(let attempt=1;attempt<=3;attempt++){
   try{refresh=await call(token,{operation:'refresh'},90000);break}catch(e){console.error(`analytics refresh attempt ${attempt} failed: ${e.message}`);if(attempt<3)await sleep(1500*attempt);else throw e}
 }
 const remaining=await call(token,{operation:'pending',limit:1})
-console.log(JSON.stringify({rounds,seen,decoded,failed,remaining:(remaining.vins||[]).length,refresh:refresh?.result||null},null,2))
+console.log(JSON.stringify({worker_version:WORKER_VERSION,rounds,seen,decoded,failed,remaining:(remaining.vins||[]).length,refresh:refresh?.result||null},null,2))
 if(failed&&decoded===0)process.exitCode=1
