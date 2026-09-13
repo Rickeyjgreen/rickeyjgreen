@@ -37,17 +37,59 @@ async function fetchHtml(url){const r=await fetch(url,{redirect:'follow',headers
 export default async function handler(req,res){
   if(req.method!=='POST')return res.status(405).json({error:'POST only'})
   if(req.headers.apikey!==KEY)return res.status(401).json({error:'Unauthorized application key.'})
-  const dealerId=String(req.body?.dealerId||'').trim();if(!/^\d{1,12}$/.test(dealerId))return res.status(400).json({error:'Invalid dealer id.'})
-  let base;try{base=normalizeBase(req.body?.website)}catch(e){return res.status(400).json({error:e.message})}
-  const dealerName=String(req.body?.dealerName||`Dealer ${dealerId}`).trim().slice(0,180),roleKey=String(req.body?.role||'ANY').toUpperCase(),role=roleFor(roleKey)
+  const dealerId=String(req.body?.dealerId||'').trim()
+  if(!/^\d{1,12}$/.test(dealerId))return res.status(400).json({error:'Invalid dealer id.'})
+  let base
+  try{base=normalizeBase(req.body?.website)}catch(e){return res.status(400).json({error:e.message})}
+  const dealerName=String(req.body?.dealerName||`Dealer ${dealerId}`).trim().slice(0,180)
+  const roleKey=String(req.body?.role||'ANY').toUpperCase()
+  const role=roleFor(roleKey)
   let browser
   try{
-    const cached=await priorSources(dealerId),sources=[],all=[];let homeLinks=[]
+    const cached=await priorSources(dealerId)
+    const sources=[]
+    const all=[]
+    let homeLinks=[]
     try{const home=await fetchHtml(base);homeLinks=links(home.html,home.url)}catch{}
     const urls=uniq([...cached,...homeLinks,...common(base)]).filter(u=>same(u,base)).slice(0,12)
-    for(const url of urls){try{const x=await fetchHtml(url),result=extractFromLines(textLines(x.html),role);if(!result.length)continue;await ingest(dealerId,x.url,result,await digest(x.html.slice(0,250000)));sources.push({source_url:x.url,count:result.length,mode:'DIRECT_HTTP'});all.push(...result.map(v=>({...v,source_url:x.url})))}catch{}}
-    if(!all.length){browser=await puppeteer.launch({args:chromium.args,defaultViewport:{width:1365,height:1000},executablePath:await chromium.executablePath(),headless:true});const page=await browser.newPage();await page.setUserAgent(UA);await page.setRequestInterception(true);page.on('request',r=>['image','media','font'].includes(r.resourceType())?r.abort():r.continue());for(const url of urls.slice(0,8)){try{await page.goto(url,{waitUntil:'domcontentloaded',timeout:22000});await new Promise(r=>setTimeout(r,500));if(!same(page.url(),base))continue;const html=await page.content(),result=extractFromLines(textLines(html),role);if(!result.length)continue;await ingest(dealerId,page.url(),result,await digest(html.slice(0,250000)));sources.push({source_url:page.url(),count:result.length,mode:'BROWSER_FALLBACK'});all.push(...result.map(v=>({...v,source_url:page.url()}))}catch{}}}
+
+    for(const url of urls){
+      try{
+        const x=await fetchHtml(url)
+        const result=extractFromLines(textLines(x.html),role)
+        if(!result.length)continue
+        await ingest(dealerId,x.url,result,await digest(x.html.slice(0,250000)))
+        sources.push({source_url:x.url,count:result.length,mode:'DIRECT_HTTP'})
+        all.push(...result.map(v=>({...v,source_url:x.url})))
+      }catch{}
+    }
+
+    if(!all.length){
+      browser=await puppeteer.launch({args:chromium.args,defaultViewport:{width:1365,height:1000},executablePath:await chromium.executablePath(),headless:true})
+      const page=await browser.newPage()
+      await page.setUserAgent(UA)
+      await page.setRequestInterception(true)
+      page.on('request',r=>['image','media','font'].includes(r.resourceType())?r.abort():r.continue())
+      for(const url of urls.slice(0,8)){
+        try{
+          await page.goto(url,{waitUntil:'domcontentloaded',timeout:22000})
+          await new Promise(r=>setTimeout(r,500))
+          if(!same(page.url(),base))continue
+          const html=await page.content()
+          const result=extractFromLines(textLines(html),role)
+          if(!result.length)continue
+          await ingest(dealerId,page.url(),result,await digest(html.slice(0,250000)))
+          sources.push({source_url:page.url(),count:result.length,mode:'BROWSER_FALLBACK'})
+          all.push(...result.map(v=>({...v,source_url:page.url()})))
+        }catch{}
+      }
+    }
+
     const unique=[...new Map(all.map(x=>[`${x.person_name.toLowerCase()}|${x.title.toLowerCase()}|${x.email||''}|${x.phone||''}`,x])).values()]
     return res.status(200).json({dealer_id:dealerId,dealer_name:dealerName,status:'COMPLETE',requested_role:roleKey,candidate_count:unique.length,candidates:unique,sources,mode:sources.some(x=>x.mode==='DIRECT_HTTP')?'DIRECT_HTTP':sources.length?'BROWSER_FALLBACK':'NO_MATCH'})
-  }catch(e){return res.status(500).json({error:e instanceof Error?e.message:String(e)})}finally{if(browser)await browser.close().catch(()=>{})}
+  }catch(e){
+    return res.status(500).json({error:e instanceof Error?e.message:String(e)})
+  }finally{
+    if(browser)await browser.close().catch(()=>{})
+  }
 }
