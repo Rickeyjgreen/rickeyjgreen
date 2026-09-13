@@ -7,12 +7,6 @@ on:
         description: Optional comma-separated dealer IDs. Blank scans the full dealer book.
         required: false
         type: string
-  push:
-    branches: [scrape-it]
-    paths:
-      - '.github/workflows/scrape-it-browser-scan.yml'
-      - 'scripts/dealer-browser-scan.mjs'
-      - 'scripts/dealer-browser-parallel.mjs'
 
 permissions:
   contents: read
