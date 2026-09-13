@@ -10,7 +10,12 @@ if(!target)throw Error(`Unknown dealer ${dealerId}`)
 
 const sleep=ms=>new Promise(r=>setTimeout(r,ms))
 function vinOK(v){if(!/^[A-HJ-NPR-Z0-9]{17}$/.test(v))return false;const m={A:1,B:2,C:3,D:4,E:5,F:6,G:7,H:8,J:1,K:2,L:3,M:4,N:5,P:7,R:9,S:2,T:3,U:4,V:5,W:6,X:7,Y:8,Z:9},w=[8,7,6,5,4,3,2,10,0,9,8,7,6,5,4,3,2];let s=0;for(let i=0;i<17;i++){const c=v[i],n=/\d/.test(c)?+c:m[c];if(n==null)return false;s+=n*w[i]}return v[8]===(s%11===10?'X':String(s%11))}
-const vins=t=>[...new Set((String(t).toUpperCase().match(/[A-HJ-NPR-Z0-9]{17}/g)||[]).filter(vinOK))].sort()
+function structuredVins(text,html){const found=[];const patterns=[
+  /\bVIN\s*(?:#|number)?\s*[:\-]?\s*([A-HJ-NPR-Z0-9]{17})\b/gi,
+  /["'](?:vin|vehicleIdentificationNumber)["']\s*:\s*["']([A-HJ-NPR-Z0-9]{17})["']/gi,
+  /(?:data-vin|data-vehicle-vin|data-vehicleidentificationnumber)\s*=\s*["']([A-HJ-NPR-Z0-9]{17})["']/gi,
+  /(?:\/vin\/|[?&]vin=)([A-HJ-NPR-Z0-9]{17})(?:\b|[&#/?])/gi
+];for(const source of [String(text),String(html)])for(const re of patterns){re.lastIndex=0;for(let m;(m=re.exec(source));)found.push(m[1].toUpperCase())}return[...new Set(found.filter(vinOK))].sort()}
 function total(text){for(const re of[/\b([0-9][0-9,]*)\s+vehicles?\s+found\b/i,/[-–]\s*([0-9][0-9,]*)\s+vehicles?\s+found/i]){const m=String(text).match(re);if(m)return Number(m[1].replace(/,/g,''))}return null}
 async function oidc(){const u=process.env.ACTIONS_ID_TOKEN_REQUEST_URL,t=process.env.ACTIONS_ID_TOKEN_REQUEST_TOKEN;if(!u||!t)throw Error('GitHub OIDC environment unavailable');const r=await fetch(`${u}${u.includes('?')?'&':'?'}audience=scrape-it-supabase`,{headers:{Authorization:`Bearer ${t}`},signal:AbortSignal.timeout(7000)}),d=await r.json();if(!r.ok||!d.value)throw Error(`OIDC ${r.status}`);return d.value}
 async function persist(result){const token=await oidc();const r=await fetch(INGEST_URL,{method:'POST',headers:{Authorization:`Bearer ${token}`,'content-type':'application/json'},body:JSON.stringify(result),signal:AbortSignal.timeout(15000)}),d=await r.json().catch(()=>({}));if(!r.ok||d.error)throw Error(d.error||`ingest ${r.status}`);return d}
@@ -35,10 +40,10 @@ try{
     await page.goto(u.toString(),{waitUntil:'domcontentloaded',timeout:20000});await sleep(600)
     const snap=await page.evaluate(()=>({title:document.title,text:document.body?.innerText||'',html:document.documentElement.outerHTML,url:location.href,next:[...document.querySelectorAll('a[href]')].find(a=>/next/i.test(`${a.rel||''} ${a.getAttribute('aria-label')||''} ${a.textContent||''}`))?.href||null}))
     if(/just a moment|attention required|access denied/i.test(`${snap.title}\n${snap.text.slice(0,1000)}`))throw Error(`Challenge page blocked Dealer Inspire inventory at page ${n}`)
-    const body=`${snap.text}\n${snap.html}`,vs=vins(body),t=total(snap.text)
-    if(!vs.length)throw Error(`Strict Dealer Inspire inventory page ${n} returned no validated VINs`)
+    const vs=structuredVins(snap.text,snap.html),t=total(snap.text)
+    if(!vs.length)throw Error(`Strict Dealer Inspire inventory page ${n} returned no VIN-labeled or VIN-structured vehicles`)
     if(t!=null)reported=reported==null?t:Math.max(reported,t)
-    vs.forEach(v=>all.add(v));lastUrl=snap.url;evidence.push({url:snap.url,title:snap.title,vin_count:vs.length,next_present:!!snap.next})
+    vs.forEach(v=>all.add(v));lastUrl=snap.url;evidence.push({url:snap.url,title:snap.title,vin_count:vs.length,next_present:!!snap.next,vin_evidence:'LABELED_OR_STRUCTURED_ONLY'})
     if(reported!=null&&all.size===reported&&!snap.next){exhausted=true;break}
     if(!snap.next){exhausted=true;break}
   }
@@ -47,7 +52,7 @@ try{
   const strictExhausted=exhausted&&evidence.length>0&&evidence.at(-1)?.next_present===false
   if(strictExhausted&&list.length>0&&(reported==null||exact)){
     const proof=reported==null?'DEALER_INSPIRE_LLM_EXHAUSTED':'DEALER_INSPIRE_VEHICLES_FOUND'
-    const reason=reported==null?`Dealer Inspire strict new-only /llm inventory exhausted after ${evidence.length} page(s), yielding ${list.length} validated VINs.`:`Dealer Inspire paginated /llm inventory returned ${list.length} validated VINs matching reported total ${reported} across ${evidence.length} page(s).`
+    const reason=reported==null?`Dealer Inspire strict new-only /llm inventory exhausted after ${evidence.length} page(s), yielding ${list.length} VIN-labeled/structured validated VINs.`:`Dealer Inspire paginated /llm inventory returned ${list.length} VIN-labeled/structured validated VINs matching reported total ${reported} across ${evidence.length} page(s).`
     const result={dealer_id:target.dealer_id,dealer_name:target.dealer_name,dealer_website:target.website,status:'COMPLETE',source_url:start,final_url:lastUrl,platform:'DEALERINSPIRE',pages_scanned:evidence.length,pagination_exhausted:true,reported_total:reported,coverage_proof:proof,coverage_status:'COMPLETE',completeness_reason:reason,vehicles:list.map(vin=>({vin,platform:'DEALERINSPIRE'})),page_evidence:evidence}
     const saved=await persist(result);complete=saved?.status==='COMPLETE'&&saved?.coverage_status==='COMPLETE';console.log(JSON.stringify({...result,ingest:saved},null,2))
   }else{
