@@ -1,12 +1,6 @@
 name: Scrape It Browser Scan Fast
 
 on:
-  push:
-    branches: [scrape-it]
-    paths:
-      - '.github/workflows/scrape-it-browser-scan-fast.yml'
-      - 'scripts/dealer-browser-scan.mjs'
-      - 'scripts/dealer-browser-parallel.mjs'
   workflow_dispatch:
 
 permissions:
