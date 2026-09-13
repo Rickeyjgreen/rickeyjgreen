@@ -11,7 +11,8 @@ on:
       - 'config/dealer-scan-targets.json'
   workflow_dispatch:
   schedule:
-    - cron: '0 13 * * 1-5'
+    - cron: '0 2 * * *'
+      timezone: 'America/Chicago'
 
 permissions:
   contents: read
@@ -32,7 +33,7 @@ jobs:
     timeout-minutes: 3
     env:
       DEALER_IDS: ${{ matrix.dealer }}
-      SCRAPE_IT_BUILD: v10-platform-adapters
+      SCRAPE_IT_BUILD: v11-acquisition-v2
     steps:
       - uses: actions/checkout@v4
         with:
