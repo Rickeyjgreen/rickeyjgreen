@@ -4,6 +4,9 @@ const fs=process.getBuiltinModule('fs')
 const targets=JSON.parse(fs.readFileSync('config/dealer-scan-targets.json','utf8'))
 const PROJECT_URL='https://eyngapizkxsernywdyfv.supabase.co'
 const INGEST_URL=`${PROJECT_URL}/functions/v1/dealer-inspire-ingest`
+const CC_HOST='websites-search.api.carscommerce.inc'
+const CC_RE=/https:\/\/websites-search\.api\.carscommerce\.inc\/api\/v1\/listings\/(\d+)\/search/i
+const SEARCH_SERVICE_RE=/var\s+SEARCH_SERVICE\s*=\s*(\{.*?\});/is
 const dealerId=String(process.env.DEALER_IDS||'').trim()
 const target=targets.find(x=>String(x.dealer_id)===dealerId)
 if(!target)throw Error(`Unknown dealer ${dealerId}`)
@@ -20,29 +23,11 @@ function vinOK(v){
   return v[8]===(s%11===10?'X':String(s%11))
 }
 
-function structuredVins(...sources){
-  const found=[]
-  const patterns=[
-    /\bVIN\s*(?:#|number)?\s*[:\-]?\s*([A-HJ-NPR-Z0-9]{17})\b/gi,
-    /["'](?:vin|vehicleIdentificationNumber)["']\s*:\s*["']([A-HJ-NPR-Z0-9]{17})["']/gi,
-    /(?:data-vin|data-vehicle-vin|data-vehicleidentificationnumber)\s*=\s*["']([A-HJ-NPR-Z0-9]{17})["']/gi,
-    /(?:\/vin\/|[?&]vin=)([A-HJ-NPR-Z0-9]{17})(?:\b|[&#/?])/gi
-  ]
-  for(const source of sources.map(String))for(const re of patterns){re.lastIndex=0;for(let x;(x=re.exec(source));)found.push(x[1].toUpperCase())}
-  return [...new Set(found.filter(vinOK))].sort()
-}
-
-function reportedTotal(text){
-  const s=String(text)
-  const patterns=[
-    /\b([0-9][0-9,]*)\s+vehicles?\s+found\b/i,
-    /\b([0-9][0-9,]*)\s+results?\s+found\b/i,
-    /showing\s+\d+\s*(?:-|–|to)\s*\d+\s+of\s+([0-9,]+)/i,
-    /\b([0-9][0-9,]*)\s+(?:new\s+)?vehicles?\s+(?:available|in stock)\b/i,
-    /["'](?:totalCount|totalVehicleCount|inventoryCount)["']?\s*[:=]\s*["']?([0-9,]+)/i
-  ]
-  for(const re of patterns){const m=s.match(re);if(m)return Number(m[1].replace(/,/g,''))}
-  return null
+function num(v){if(v==null)return null;const n=Number(String(v).replace(/[$,]/g,''));return Number.isFinite(n)?n:null}
+function extractService(html){
+  const m=String(html||'').match(SEARCH_SERVICE_RE)
+  if(!m)return null
+  try{const cfg=JSON.parse(m[1]);if(!cfg?.ccid||!cfg?.apiKey)return null;return{ccid:String(cfg.ccid),apiKey:String(cfg.apiKey),apiUrl:String(cfg.apiUrl||'')}}catch{return null}
 }
 
 async function oidc(){
@@ -55,17 +40,15 @@ async function oidc(){
 
 async function persist(result){
   const token=await oidc()
-  const r=await fetch(INGEST_URL,{method:'POST',headers:{Authorization:`Bearer ${token}`,'content-type':'application/json'},body:JSON.stringify(result),signal:AbortSignal.timeout(15000)}),d=await r.json().catch(()=>({}))
+  const r=await fetch(INGEST_URL,{method:'POST',headers:{Authorization:`Bearer ${token}`,'content-type':'application/json'},body:JSON.stringify(result),signal:AbortSignal.timeout(20000)}),d=await r.json().catch(()=>({}))
   if(!r.ok||d.error)throw Error(d.error||`ingest ${r.status}`)
   return d
 }
-
 function out(needed){if(process.env.GITHUB_OUTPUT)fs.appendFileSync(process.env.GITHUB_OUTPUT,`browser_needed=${needed?'true':'false'}\n`)}
 
 if(target.platform!=='DEALERINSPIRE'){
   console.log(JSON.stringify({dealer_id:dealerId,status:'SKIPPED',reason:'Not Dealer Inspire'}))
-  out(true)
-  process.exit(0)
+  out(true);process.exit(0)
 }
 
 const browserPaths=['/usr/bin/chromium','/usr/bin/chromium-browser','/usr/bin/google-chrome-stable','/usr/bin/google-chrome'].filter(p=>fs.existsSync(p))
@@ -75,9 +58,8 @@ async function launchBrowser(){
   let last
   for(const executablePath of browserPaths){
     for(let attempt=1;attempt<=2;attempt++){
-      try{
-        return await puppeteer.launch({executablePath,headless:true,pipe:true,timeout:20000,args:['--no-sandbox','--disable-dev-shm-usage','--disable-gpu','--disable-background-networking','--disable-sync','--no-first-run','--no-default-browser-check','--disable-extensions']})
-      }catch(e){last=e;console.log(JSON.stringify({dealer_id:dealerId,phase:'browser_launch_retry',executablePath,attempt,error:e.message}));await sleep(500*attempt)}
+      try{return await puppeteer.launch({executablePath,headless:true,pipe:true,timeout:20000,args:['--no-sandbox','--disable-dev-shm-usage','--disable-gpu','--disable-background-networking','--disable-sync','--no-first-run','--no-default-browser-check','--disable-extensions']})}
+      catch(e){last=e;console.log(JSON.stringify({dealer_id:dealerId,phase:'browser_launch_retry',executablePath,attempt,error:e.message}));await sleep(500*attempt)}
     }
   }
   throw last||Error('Browser launch failed')
@@ -90,118 +72,108 @@ async function configure(page){
   await page.setRequestInterception(true)
   page.on('request',r=>['image','media','font'].includes(r.resourceType())?r.abort().catch(()=>{}):r.continue().catch(()=>{}))
 }
+function challenged(title,text){return /just a moment|attention required|access denied|cloudflare|you have been blocked/i.test(`${title}\n${String(text).slice(0,2500)}`)}
 
-function challenged(title,text){return /just a moment|attention required|access denied|cloudflare/i.test(`${title}\n${String(text).slice(0,1500)}`)}
-
-async function expand(page){
-  let prior=0,stable=0
-  for(let i=0;i<16;i++){
-    await page.evaluate(()=>window.scrollTo(0,document.body.scrollHeight)).catch(()=>{})
-    await sleep(250)
-    const x=await page.evaluate(()=>{
-      const re=/^(load more|show more|view more|more vehicles|see more)$/i
-      const el=[...document.querySelectorAll('button,a')].find(x=>re.test((x.textContent||'').replace(/\s+/g,' ').trim())&&!x.disabled)
-      if(el){el.click();return{clicked:true,h:document.body.scrollHeight}}
-      return{clicked:false,h:document.body.scrollHeight}
-    }).catch(()=>({clicked:false,h:0}))
-    stable=x.h===prior?stable+1:0;prior=x.h
-    if(!x.clicked&&stable>=2)break
+async function discoverCarsCommerce(browser){
+  const page=await browser.newPage();await configure(page)
+  let found=null
+  const capture=req=>{
+    if(found)return
+    const url=req.url(),m=url.match(CC_RE)
+    if(!m)return
+    const h=req.headers(),apiKey=h['x-api-key']||h['X-Api-Key']
+    if(apiKey)found={ccid:m[1],apiKey:String(apiKey),apiUrl:`https://${CC_HOST}`,evidence:'NETWORK_REQUEST',evidenceUrl:url}
   }
+  page.on('request',capture)
+  const paths=[]
+  if(target.inventory_url&&!target.inventory_url.includes('/llm/inventory'))paths.push(target.inventory_url)
+  for(const p of ['/','/new-vehicles/','/inventory/','/search/new/','/used-vehicles/'])paths.push(new URL(p,target.website).toString())
+  const evidence=[]
+  try{
+    for(const url of [...new Set(paths)]){
+      try{await page.goto(url,{waitUntil:'domcontentloaded',timeout:22000})}catch{}
+      await sleep(1300)
+      const snap=await page.evaluate(()=>({url:location.href,title:document.title,html:document.documentElement.outerHTML,text:document.body?.innerText||''})).catch(()=>({url,title:'',html:'',text:''}))
+      const cfg=extractService(snap.html)
+      evidence.push({url:snap.url||url,title:snap.title,challenge:challenged(snap.title,snap.text),config_found:!!cfg,network_found:!!found})
+      if(cfg){found={...cfg,evidence:'SEARCH_SERVICE_HTML',evidenceUrl:snap.url||url};break}
+      if(found)break
+    }
+    return{config:found,evidence}
+  }finally{page.off('request',capture);await page.close().catch(()=>{})}
 }
 
-async function snapshot(page){
-  return page.evaluate(()=>{
-    const anchors=[...document.querySelectorAll('a[href]')]
-    const next=anchors.find(a=>{
-      const rel=(a.getAttribute('rel')||'').toLowerCase(),aria=(a.getAttribute('aria-label')||'').trim(),text=(a.textContent||'').replace(/\s+/g,' ').trim()
-      return rel.split(/\s+/).includes('next')||/^next(?: page)?$/i.test(aria)||/^next(?:\s*[›»→>]+)?$/i.test(text)
-    })
-    return{title:document.title,text:document.body?.innerText||'',html:document.documentElement.outerHTML,url:location.href,next:next?.href||null}
-  })
+function vehicleFromHit(hit){
+  const vin=String(hit?.vin||'').toUpperCase()
+  const pricing=hit?.pricing||{},styles=hit?.styles||{}
+  const vdp=String(hit?.vdp_url||'')
+  let vehicleUrl=null
+  if(vdp)vehicleUrl=vdp.startsWith('http')?vdp:new URL(vdp,target.website).toString()
+  return{vin,year:num(hit?.year),make:hit?.make||null,model:hit?.model||null,trim:hit?.trim||null,engine:hit?.engine||null,stock_number:hit?.stock||null,status:hit?.status||null,price:num(pricing.our_price)||num(pricing.price)||null,msrp:num(pricing.msrp),vehicle_url:vehicleUrl,platform:'DEALERINSPIRE'}
+}
+
+async function scanCarsCommerce(cfg){
+  const ccid=String(cfg.ccid),endpoint=`https://${CC_HOST}/api/v1/listings/${encodeURIComponent(ccid)}/search`
+  const headers={'x-api-key':cfg.apiKey,'content-type':'application/json','accept':'application/json','user-agent':'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/152 Safari/537.36','origin':target.website.replace(/\/$/,''),'referer':target.website.replace(/\/$/,'')+'/'}
+  const all=new Map(),pages=[];let total=null,page=1,terminal=false
+  while(page<=100){
+    const payload=page===1?{filters:{}}:{filters:{},page}
+    let r
+    for(let attempt=1;attempt<=3;attempt++){
+      try{r=await fetch(endpoint,{method:'POST',headers,body:JSON.stringify(payload),signal:AbortSignal.timeout(25000)});if(r.status>=500&&attempt<3){await sleep(500*attempt);continue}break}catch(e){if(attempt===3)throw e;await sleep(500*attempt)}
+    }
+    if(!r?.ok)throw Error(`Cars Commerce HTTP ${r?.status||'network error'} on page ${page}`)
+    const json=await r.json(),data=json?.data||{},listings=Array.isArray(data.listings)?data.listings:[]
+    const t=num(data.total_vehicle_count)
+    if(t!=null)total=total==null?t:Math.max(total,t)
+    let validThis=0
+    for(const hit of listings){
+      const v=vehicleFromHit(hit)
+      if(!vinOK(v.vin))continue
+      validThis++
+      all.set(v.vin,{hit,vehicle:v})
+    }
+    pages.push({page,listing_count:listings.length,valid_vin_count:validThis,total_vehicle_count:t})
+    if(!listings.length){terminal=true;break}
+    if(total!=null&&all.size>=total){terminal=true;break}
+    page++
+  }
+  if(total==null)throw Error('Cars Commerce response did not report total_vehicle_count')
+  if(!terminal)throw Error(`Cars Commerce pagination exceeded page cap with ${all.size}/${total} unique VINs`)
+  if(all.size!==total)throw Error(`Cars Commerce total ${total} does not reconcile to ${all.size} unique checksum-valid VINs`)
+  const newRows=[...all.values()].filter(({hit})=>String(hit?.type||'').toLowerCase()==='new')
+  const ambiguous=[...all.values()].filter(({hit})=>!hit?.type)
+  if(ambiguous.length)throw Error(`Cars Commerce returned ${ambiguous.length} listing(s) without a vehicle type; refusing COMPLETE new-inventory proof`)
+  const vehicles=newRows.map(x=>x.vehicle).sort((a,b)=>a.vin.localeCompare(b.vin))
+  return{dealer_id:target.dealer_id,dealer_name:target.dealer_name,dealer_website:target.website,status:'COMPLETE',source_url:endpoint,final_url:endpoint,platform:'DEALERINSPIRE',pages_scanned:pages.length,pagination_exhausted:true,reported_total:vehicles.length,coverage_proof:'DEALER_INSPIRE_CARS_COMMERCE_EXHAUSTED',coverage_status:'COMPLETE',completeness_reason:`Dealer Inspire Cars Commerce account ${ccid} returned ${total} total public listings across ${pages.length} page(s); every listing reconciled to a unique checksum-valid VIN and ${vehicles.length} were explicitly type New.`,vehicles,page_evidence:pages.map((p,i)=>({url:endpoint,title:`Cars Commerce page ${p.page}`,vin_count:p.valid_vin_count,next_present:i<pages.length-1,vin_evidence:'CARS_COMMERCE_STRUCTURED_LISTING',listing_count:p.listing_count,total_vehicle_count:p.total_vehicle_count})),platform_evidence:{ccid,discovery_method:cfg.evidence,discovery_url:cfg.evidenceUrl,total_all_inventory:total,new_inventory_count:vehicles.length}}
 }
 
 async function scanLlm(browser){
   const page=await browser.newPage();await configure(page)
   const start=new URL('/llm/inventory/?limit=100&page=1&type=new',target.website).toString()
   try{
-    const all=new Set(),evidence=[];let reported=null,lastUrl=start,exhausted=false
-    for(let n=1;n<=60;n++){
-      const u=new URL(start);u.searchParams.set('page',String(n))
-      await page.goto(u.toString(),{waitUntil:'domcontentloaded',timeout:22000});await sleep(600)
-      const snap=await snapshot(page)
-      if(challenged(snap.title,snap.text))return{ok:false,reason:`challenge at /llm page ${n}`}
-      const vs=structuredVins(snap.text,snap.html),t=reportedTotal(snap.text)
-      if(!vs.length)return{ok:false,reason:`/llm page ${n} returned no structured/labeled VINs`}
-      if(t!=null)reported=reported==null?t:Math.max(reported,t)
-      vs.forEach(v=>all.add(v));lastUrl=snap.url;evidence.push({url:snap.url,title:snap.title,vin_count:vs.length,next_present:!!snap.next,vin_evidence:'LABELED_OR_STRUCTURED_ONLY'})
-      if(!snap.next){exhausted=true;break}
-    }
-    const list=[...all].sort(),exact=reported!=null&&list.length===reported
-    if(exhausted&&list.length>0&&(reported==null||exact)){
-      return{ok:true,result:{dealer_id:target.dealer_id,dealer_name:target.dealer_name,dealer_website:target.website,status:'COMPLETE',source_url:start,final_url:lastUrl,platform:'DEALERINSPIRE',pages_scanned:evidence.length,pagination_exhausted:true,reported_total:reported,coverage_proof:reported==null?'DEALER_INSPIRE_LLM_EXHAUSTED':'DEALER_INSPIRE_VEHICLES_FOUND',coverage_status:'COMPLETE',completeness_reason:reported==null?`Dealer Inspire strict new-only /llm inventory exhausted after ${evidence.length} page(s), yielding ${list.length} structured/labeled validated VINs.`:`Dealer Inspire /llm inventory returned ${list.length} structured/labeled validated VINs matching reported total ${reported}.`,vehicles:list.map(vin=>({vin,platform:'DEALERINSPIRE'})),page_evidence:evidence}}
-    }
-    return{ok:false,reason:`/llm did not reconcile: ${list.length}${reported!=null?` of ${reported}`:''}`}
-  }finally{await page.close().catch(()=>{})}
-}
-
-async function scanPublicInventory(browser){
-  const candidates=[]
-  if(target.inventory_url&&!target.inventory_url.includes('/llm/inventory'))candidates.push(target.inventory_url)
-  for(const p of ['/search/new/tp/','/search/new/','/new-vehicles/','/new-inventory/','/inventory/new'])candidates.push(new URL(p,target.website).toString())
-
-  let best={vin_count:0,reason:'No usable public inventory page.'}
-  for(const start of [...new Set(candidates)]){
-    const page=await browser.newPage();await configure(page)
-    const all=new Set(),evidence=[],seen=new Set(),networkVins=new Set(),pending=new Set();let reported=null,current=start,exhausted=false,lastUrl=start
-    const onResponse=response=>{
-      const req=response.request(),type=req.resourceType(),url=response.url()
-      if(!['xhr','fetch','document','script'].includes(type))return
-      if(!/(inventory|vehicle|search|listing|ajax|api|graphql|wp-json)/i.test(url))return
-      const len=Number(response.headers()['content-length']||0);if(len>2500000)return
-      const p=response.text().then(body=>{for(const vin of structuredVins(body))networkVins.add(vin);const t=reportedTotal(body);if(t!=null)reported=reported==null?t:Math.max(reported,t)}).catch(()=>{}).finally(()=>pending.delete(p));pending.add(p)
-    }
-    page.on('response',onResponse)
-    try{
-      for(let n=1;n<=60;n++){
-        if(seen.has(current)){exhausted=true;break}seen.add(current)
-        try{await page.goto(current,{waitUntil:'domcontentloaded',timeout:22000})}catch(e){if(!evidence.length)throw e;break}
-        await sleep(900);await expand(page);await sleep(400);await Promise.allSettled([...pending]);
-        const snap=await snapshot(page);lastUrl=snap.url
-        if(!sameHost(snap.url,target.website))break
-        if(challenged(snap.title,snap.text)){if(!evidence.length)break;else{exhausted=false;break}}
-        const domVins=structuredVins(snap.text,snap.html);for(const v of domVins)all.add(v);for(const v of networkVins)all.add(v)
-        const t=reportedTotal(`${snap.text}\n${snap.html}`);if(t!=null)reported=reported==null?t:Math.max(reported,t)
-        evidence.push({url:snap.url,title:snap.title,vin_count:all.size,next_present:!!snap.next,vin_evidence:'DOM_OR_PUBLIC_XHR_STRUCTURED_ONLY'})
-        let next=snap.next
-        if(next){try{next=new URL(next,snap.url).toString()}catch{next=null}}
-        if(next&&!sameHost(next,target.website))next=null
-        if(!next){exhausted=true;break}
-        current=next
-      }
-      const list=[...all].sort(),exact=reported!=null&&list.length===reported&&list.length>0
-      if(exhausted&&exact){
-        return{ok:true,result:{dealer_id:target.dealer_id,dealer_name:target.dealer_name,dealer_website:target.website,status:'COMPLETE',source_url:start,final_url:lastUrl,platform:'DEALERINSPIRE',pages_scanned:evidence.length,pagination_exhausted:true,reported_total:reported,coverage_proof:'DEALER_INSPIRE_PUBLIC_TOTAL_RECONCILED',coverage_status:'COMPLETE',completeness_reason:`Dealer Inspire public inventory page/XHR scan exhausted and exactly reconciled ${list.length} structured/labeled validated VINs to reported total ${reported}.`,vehicles:list.map(vin=>({vin,platform:'DEALERINSPIRE'})),page_evidence:evidence}}
-      }
-      const reason=`Public inventory observed ${list.length}${reported!=null?` of reported ${reported}`:''} structured/labeled VINs across ${evidence.length} page(s); exhaustive exact reconciliation not proven.`
-      if(list.length>best.vin_count)best={vin_count:list.length,reported,evidence,start,lastUrl,reason}
-    }catch(e){if(best.vin_count===0)best.reason=e.message}
-    finally{page.off('response',onResponse);await page.close().catch(()=>{})}
-  }
-  return{ok:false,best}
+    await page.goto(start,{waitUntil:'domcontentloaded',timeout:22000});await sleep(600)
+    const snap=await page.evaluate(()=>({title:document.title,text:document.body?.innerText||'',html:document.documentElement.outerHTML,url:location.href})).catch(()=>({title:'',text:'',html:'',url:start}))
+    if(challenged(snap.title,snap.text))return{ok:false,reason:'challenge at /llm inventory'}
+    return{ok:false,reason:'Cars Commerce config unavailable; strict /llm fallback intentionally does not infer COMPLETE without independently reconciled pagination.'}
+  }catch(e){return{ok:false,reason:e.message}}
+  finally{await page.close().catch(()=>{})}
 }
 
 let browser
 try{
   browser=await launchBrowser()
+  const discovered=await discoverCarsCommerce(browser)
+  if(discovered.config){
+    console.log(JSON.stringify({dealer_id:dealerId,phase:'cars_commerce_discovered',ccid:discovered.config.ccid,evidence:discovered.config.evidence}))
+    const result=await scanCarsCommerce(discovered.config)
+    const saved=await persist(result)
+    console.log(JSON.stringify({...result,ingest:saved},null,2));out(false);process.exit(0)
+  }
   const llm=await scanLlm(browser)
-  if(llm.ok){const saved=await persist(llm.result);console.log(JSON.stringify({...llm.result,ingest:saved},null,2));out(false);process.exit(0)}
-  console.log(JSON.stringify({dealer_id:dealerId,phase:'llm_fallback',reason:llm.reason}))
-  const publicScan=await scanPublicInventory(browser)
-  if(publicScan.ok){const saved=await persist(publicScan.result);console.log(JSON.stringify({...publicScan.result,ingest:saved},null,2));out(false);process.exit(0)}
-  console.log(JSON.stringify({dealer_id:dealerId,status:'INCOMPLETE',platform:'DEALERINSPIRE',vin_count:publicScan.best?.vin_count||0,reported_total:publicScan.best?.reported??null,pages_scanned:publicScan.best?.evidence?.length||0,reason:publicScan.best?.reason||llm.reason},null,2))
+  console.log(JSON.stringify({dealer_id:dealerId,status:'INCOMPLETE',platform:'DEALERINSPIRE',reason:`Cars Commerce dealer account could not be discovered from public site execution. ${llm.reason}`,discovery_evidence:discovered.evidence},null,2))
   out(false)
 }catch(e){
-  console.log(JSON.stringify({dealer_id:dealerId,status:'INCOMPLETE',platform:'DEALERINSPIRE',error:e.message,reason:'Dealer Inspire public-source scan failed without proving exhaustive coverage.'},null,2))
-  out(false)
+  console.log(JSON.stringify({dealer_id:dealerId,status:'INCOMPLETE',platform:'DEALERINSPIRE',error:e.message,reason:'Dealer Inspire Cars Commerce scan failed without proving exhaustive coverage.'},null,2));out(false)
 }finally{await browser?.close().catch(()=>{})}
 process.exit(0)
