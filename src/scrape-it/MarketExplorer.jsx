@@ -1,5 +1,5 @@
 import React,{useEffect,useMemo,useState} from 'react'
-import {Activity,Building2,Map,RefreshCw,Sparkles} from 'lucide-react'
+import {Activity,Building2,Map as MapIcon,RefreshCw,Sparkles} from 'lucide-react'
 import {groupInventoryData} from './InventoryBrowser.jsx'
 
 const PULSE_URL='https://eyngapizkxsernywdyfv.supabase.co/functions/v1/dealer-pulse-api'
@@ -30,7 +30,7 @@ export default function MarketExplorer({dealerState,onNavigate}){
     return {ACTIVITY:cap(activity),MODELS:cap([...models].map(([name,value])=>({name,value,key:name.replace(' ','|')}))),REGIONS:cap([...regions].map(([name,value])=>({name,value,key:name}))),DEALERS:cap([...dealers].map(([name,value])=>({name,value,key:name})))}
   },[grouped,pulse])
   const data=datasets[view]||[],total=data.reduce((s,x)=>s+x.value,0)
-  const config={ACTIVITY:{label:'Market activity',unit:'signals',icon:Activity},MODELS:{label:'Model distribution',unit:'units',icon:Sparkles},REGIONS:{label:'Regional inventory',unit:'units',icon:Map},DEALERS:{label:'Dealer concentration',unit:'units',icon:Building2}}[view]
+  const config={ACTIVITY:{label:'Market activity',unit:'signals',icon:Activity},MODELS:{label:'Model distribution',unit:'units',icon:Sparkles},REGIONS:{label:'Regional inventory',unit:'units',icon:MapIcon},DEALERS:{label:'Dealer concentration',unit:'units',icon:Building2}}[view]
   const Icon=config.icon
 
   function pick(item){if(!item||item.key==='OTHER')return;if(view==='REGIONS')onNavigate?.({tab:'DEALERS',region:item.key});if(view==='DEALERS')onNavigate?.({tab:'DEALERS',query:item.name});if(view==='MODELS'||view==='ACTIVITY')onNavigate?.({tab:'MODELS',query:item.name})}
