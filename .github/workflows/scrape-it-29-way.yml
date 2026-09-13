@@ -6,6 +6,7 @@ on:
       - '.github/workflows/scrape-it-29-way.yml'
       - 'scripts/dealer-browser-scan.mjs'
       - 'scripts/dealer-http-edge.mjs'
+      - 'scripts/dealer-inspire-browser.mjs'
       - 'config/dealer-scan-targets.json'
   workflow_dispatch:
   schedule:
@@ -30,7 +31,7 @@ jobs:
     timeout-minutes: 3
     env:
       DEALER_IDS: ${{ matrix.dealer }}
-      SCRAPE_IT_BUILD: v8-control-center
+      SCRAPE_IT_BUILD: v9-coverage-hardening
     steps:
       - uses: actions/checkout@v4
         with:
@@ -44,6 +45,10 @@ jobs:
       - name: Install browser client only for fallback
         if: steps.http.outputs.browser_needed == 'true'
         run: npm install --ignore-scripts --no-audit --no-fund
-      - name: Browser fallback only
+      - name: Exhaustive Dealer Inspire browser pagination
+        id: inspire
         if: steps.http.outputs.browser_needed == 'true'
+        run: node scripts/dealer-inspire-browser.mjs
+      - name: Generic browser fallback only
+        if: steps.http.outputs.browser_needed == 'true' && steps.inspire.outputs.browser_needed == 'true'
         run: node scripts/dealer-browser-scan.mjs
