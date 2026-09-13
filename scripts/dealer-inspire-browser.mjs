@@ -3,7 +3,7 @@ import puppeteer from 'puppeteer-core'
 const fs=process.getBuiltinModule('fs')
 const targets=JSON.parse(fs.readFileSync('config/dealer-scan-targets.json','utf8'))
 const PROJECT_URL='https://eyngapizkxsernywdyfv.supabase.co'
-const INGEST_URL=`${PROJECT_URL}/functions/v1/dealer-browser-ingest`
+const INGEST_URL=`${PROJECT_URL}/functions/v1/dealer-inspire-ingest`
 const dealerId=String(process.env.DEALER_IDS||'').trim()
 const target=targets.find(x=>String(x.dealer_id)===dealerId)
 if(!target)throw Error(`Unknown dealer ${dealerId}`)
@@ -31,23 +31,27 @@ try{
   const page=await browser.newPage();await page.setViewport({width:1280,height:900});await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/152 Safari/537.36');page.setDefaultNavigationTimeout(20000);await page.setRequestInterception(true);page.on('request',r=>['image','media','font'].includes(r.resourceType())?r.abort().catch(()=>{}):r.continue().catch(()=>{}))
   const all=new Set(),evidence=[];let reported=null,lastUrl=start,exhausted=false
   for(let n=1;n<=20;n++){
-    const u=new URL(start);u.searchParams.set('page',String(n));
+    const u=new URL(start);u.searchParams.set('page',String(n))
     await page.goto(u.toString(),{waitUntil:'domcontentloaded',timeout:20000});await sleep(600)
     const snap=await page.evaluate(()=>({title:document.title,text:document.body?.innerText||'',html:document.documentElement.outerHTML,url:location.href,next:[...document.querySelectorAll('a[href]')].find(a=>/next/i.test(`${a.rel||''} ${a.getAttribute('aria-label')||''} ${a.textContent||''}`))?.href||null}))
     if(/just a moment|attention required|access denied/i.test(`${snap.title}\n${snap.text.slice(0,1000)}`))throw Error(`Challenge page blocked Dealer Inspire inventory at page ${n}`)
     const body=`${snap.text}\n${snap.html}`,vs=vins(body),t=total(snap.text)
+    if(!vs.length)throw Error(`Strict Dealer Inspire inventory page ${n} returned no validated VINs`)
     if(t!=null)reported=reported==null?t:Math.max(reported,t)
-    vs.forEach(v=>all.add(v));lastUrl=snap.url;evidence.push({url:snap.url,title:snap.title,vin_count:vs.length})
-    if(reported!=null&&all.size>=reported){exhausted=true;break}
-    if(!snap.next&&vs.length<100){exhausted=true;break}
-    if(!vs.length){exhausted=true;break}
+    vs.forEach(v=>all.add(v));lastUrl=snap.url;evidence.push({url:snap.url,title:snap.title,vin_count:vs.length,next_present:!!snap.next})
+    if(reported!=null&&all.size===reported&&!snap.next){exhausted=true;break}
+    if(!snap.next){exhausted=true;break}
   }
-  const list=[...all].sort();
-  if(reported!=null&&list.length===reported&&exhausted&&list.length>0){
-    const result={dealer_id:target.dealer_id,dealer_name:target.dealer_name,dealer_website:target.website,status:'COMPLETE',source_url:start,final_url:lastUrl,platform:'DEALERINSPIRE',pages_scanned:evidence.length,pagination_exhausted:true,reported_total:reported,coverage_proof:'DEALER_INSPIRE_VEHICLES_FOUND',coverage_status:'COMPLETE',completeness_reason:`Dealer Inspire paginated /llm inventory returned ${list.length} validated VINs matching reported total ${reported} across ${evidence.length} page(s).`,vehicles:list.map(vin=>({vin,platform:'DEALERINSPIRE'})),page_evidence:evidence}
+  const list=[...all].sort()
+  const exact=reported!=null&&list.length===reported
+  const strictExhausted=exhausted&&evidence.length>0&&evidence.at(-1)?.next_present===false
+  if(strictExhausted&&list.length>0&&(reported==null||exact)){
+    const proof=reported==null?'DEALER_INSPIRE_LLM_EXHAUSTED':'DEALER_INSPIRE_VEHICLES_FOUND'
+    const reason=reported==null?`Dealer Inspire strict new-only /llm inventory exhausted after ${evidence.length} page(s), yielding ${list.length} validated VINs.`:`Dealer Inspire paginated /llm inventory returned ${list.length} validated VINs matching reported total ${reported} across ${evidence.length} page(s).`
+    const result={dealer_id:target.dealer_id,dealer_name:target.dealer_name,dealer_website:target.website,status:'COMPLETE',source_url:start,final_url:lastUrl,platform:'DEALERINSPIRE',pages_scanned:evidence.length,pagination_exhausted:true,reported_total:reported,coverage_proof:proof,coverage_status:'COMPLETE',completeness_reason:reason,vehicles:list.map(vin=>({vin,platform:'DEALERINSPIRE'})),page_evidence:evidence}
     const saved=await persist(result);complete=saved?.status==='COMPLETE'&&saved?.coverage_status==='COMPLETE';console.log(JSON.stringify({...result,ingest:saved},null,2))
   }else{
-    console.log(JSON.stringify({dealer_id:dealerId,status:'INCOMPLETE',platform:'DEALERINSPIRE',vin_count:list.length,reported_total:reported,pages_scanned:evidence.length,reason:`Dealer Inspire pagination did not reconcile: observed ${list.length}${reported!=null?` of ${reported}`:''}.`,page_evidence:evidence},null,2))
+    console.log(JSON.stringify({dealer_id:dealerId,status:'INCOMPLETE',platform:'DEALERINSPIRE',vin_count:list.length,reported_total:reported,pages_scanned:evidence.length,reason:`Dealer Inspire strict pagination did not prove exhaustion/reconciliation: observed ${list.length}${reported!=null?` of ${reported}`:''}.`,page_evidence:evidence},null,2))
   }
 }catch(e){console.log(JSON.stringify({dealer_id:dealerId,status:'FALLBACK',platform:'DEALERINSPIRE',error:e.message},null,2))}
 finally{await browser.close().catch(()=>{})}
