@@ -28,7 +28,7 @@ jobs:
     timeout-minutes: 3
     env:
       DEALER_IDS: ${{ matrix.dealer }}
-      SCRAPE_IT_BUILD: v6-live-adapters
+      SCRAPE_IT_BUILD: v7-hardened-truth-gate
     steps:
       - uses: actions/checkout@v4
         with:
