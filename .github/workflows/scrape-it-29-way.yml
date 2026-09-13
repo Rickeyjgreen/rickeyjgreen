@@ -5,6 +5,8 @@ on:
     paths:
       - '.github/workflows/scrape-it-29-way.yml'
       - 'scripts/dealer-browser-scan.mjs'
+      - 'scripts/dealer-http-edge.mjs'
+      - 'config/dealer-scan-targets.json'
   workflow_dispatch:
 
 permissions:
@@ -33,5 +35,12 @@ jobs:
       - uses: actions/setup-node@v6
         with:
           node-version: '24'
-      - run: npm install --ignore-scripts --no-audit --no-fund
-      - run: node scripts/dealer-browser-scan.mjs
+      - name: Direct HTTP platform scan
+        id: http
+        run: node scripts/dealer-http-edge.mjs
+      - name: Install browser client only for fallback
+        if: steps.http.outputs.browser_needed == 'true'
+        run: npm install --ignore-scripts --no-audit --no-fund
+      - name: Browser fallback only
+        if: steps.http.outputs.browser_needed == 'true'
+        run: node scripts/dealer-browser-scan.mjs
