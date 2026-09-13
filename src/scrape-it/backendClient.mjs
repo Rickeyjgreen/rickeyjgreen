@@ -46,18 +46,18 @@ export async function scanDealerInventory(dealerId,{jobId=null}={}){
     const direct=await callApi(DEALER_API_URL,{operation:'scan',dealerId})
     if(direct?.result?.status==='COMPLETE'){
       const elapsed_ms=Math.round(performance.now()-started)
-      if(jobId)await updateControlItem(jobId,dealerId,{status:'COMPLETE',stage:'SAVED',progress:100,mode:'DIRECT_HTTP',platform:direct.result.platform,vin_count:direct.result.vin_count||0,elapsed_ms,message:direct.result.completeness_reason||'Complete coverage proven'})
+      if(jobId)await updateControlItem(jobId,dealerId,{status:'COMPLETE',stage:'SAVED',progress:100,mode:'DIRECT_HTTP',platform:direct.result.platform,vin_count:direct.result.vin_count||0,metadata:{elapsed_ms},message:direct.result.completeness_reason||'Complete coverage proven'})
       return{...direct,elapsed_ms,state:await loadDealerState()}
     }
     if(jobId)await updateControlItem(jobId,dealerId,{status:'RUNNING',stage:'BROWSER_FALLBACK',progress:45,mode:'BROWSER',platform:direct?.result?.platform||null,vin_count:direct?.result?.vin_count||0,message:'Direct path did not prove complete coverage; launching browser fallback'})
     const browser=await browserFallback(dealerId)
     const state=await loadDealerState(),elapsed_ms=Math.round(performance.now()-started)
     const result={dealer_id:String(dealerId),dealer_name:browser.dealer_name,status:browser.ingest?.status||browser.coverage_status,vin_count:browser.ingest?.vin_count??browser.vehicles?.length??0,platform:browser.platform,pages_scanned:browser.pages_scanned,coverage_status:browser.ingest?.coverage_status||browser.coverage_status,completeness_reason:browser.ingest?.completeness_reason||browser.completeness_reason,reported_total:browser.reported_total,change:browser.ingest?.change||null,elapsed_ms}
-    if(jobId)await updateControlItem(jobId,dealerId,{status:result.status==='COMPLETE'?'COMPLETE':'INCOMPLETE',stage:'SAVED',progress:100,mode:'BROWSER',platform:result.platform,vin_count:result.vin_count||0,elapsed_ms,message:result.completeness_reason||result.status})
+    if(jobId)await updateControlItem(jobId,dealerId,{status:result.status==='COMPLETE'?'COMPLETE':'INCOMPLETE',stage:'SAVED',progress:100,mode:'BROWSER',platform:result.platform,vin_count:result.vin_count||0,metadata:{elapsed_ms},message:result.completeness_reason||result.status})
     return{result,state,elapsed_ms}
   }catch(e){
     const elapsed_ms=Math.round(performance.now()-started)
-    if(jobId)await updateControlItem(jobId,dealerId,{status:'ERROR',stage:'ERROR',progress:100,elapsed_ms,error_message:e.message,message:'Inventory scan failed'}).catch(()=>{})
+    if(jobId)await updateControlItem(jobId,dealerId,{status:'ERROR',stage:'ERROR',progress:100,metadata:{elapsed_ms},error_message:e.message,message:'Inventory scan failed'}).catch(()=>{})
     throw e
   }
 }
@@ -67,11 +67,11 @@ export async function scanDealerContacts(dealerId,{jobId=null,role='ANY'}={}){
   if(jobId)await updateControlItem(jobId,dealerId,{status:'RUNNING',stage:'STAFF_DISCOVERY',progress:18,message:`Searching public staff pages for ${role}`})
   try{
     const result=await contactFallback(dealerId,role),elapsed_ms=Math.round(performance.now()-started)
-    if(jobId)await updateControlItem(jobId,dealerId,{status:'COMPLETE',stage:'CONTACTS_SAVED',progress:100,mode:result.mode||'PUBLIC_WEB',contact_count:result.candidate_count||0,elapsed_ms,message:`${result.candidate_count||0} public candidate(s) found for ${role}`})
+    if(jobId)await updateControlItem(jobId,dealerId,{status:'COMPLETE',stage:'CONTACTS_SAVED',progress:100,mode:result.mode||'PUBLIC_WEB',contact_count:result.candidate_count||0,metadata:{elapsed_ms,requested_role:role},message:`${result.candidate_count||0} public candidate(s) found for ${role}`})
     return{...result,elapsed_ms}
   }catch(e){
     const elapsed_ms=Math.round(performance.now()-started)
-    if(jobId)await updateControlItem(jobId,dealerId,{status:'ERROR',stage:'ERROR',progress:100,elapsed_ms,error_message:e.message,message:'Contact discovery failed'}).catch(()=>{})
+    if(jobId)await updateControlItem(jobId,dealerId,{status:'ERROR',stage:'ERROR',progress:100,metadata:{elapsed_ms,requested_role:role},error_message:e.message,message:'Contact discovery failed'}).catch(()=>{})
     throw e
   }
 }
