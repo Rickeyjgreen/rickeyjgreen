@@ -1,96 +1,10 @@
 name: Scrape It Six Runner Scan
+
 on:
   workflow_dispatch:
-  push:
-    branches: [scrape-it]
-    paths:
-      - '.github/workflows/scrape-it-six-runner.yml'
-      - 'scripts/dealer-browser-scan.mjs'
-permissions:
-  contents: read
-  id-token: write
+
 jobs:
-  scan1:
+  retired:
     runs-on: ubuntu-24.04
-    timeout-minutes: 20
-    env:
-      DEALER_IDS: 110,117,140,155,163
     steps:
-      - uses: actions/checkout@v4
-        with:
-          ref: scrape-it
-      - uses: actions/setup-node@v6
-        with:
-          node-version: '24'
-      - run: npm install --ignore-scripts --no-audit --no-fund
-      - run: node scripts/dealer-browser-scan.mjs
-  scan2:
-    runs-on: ubuntu-24.04
-    timeout-minutes: 20
-    env:
-      DEALER_IDS: 164,168,171,188,190
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          ref: scrape-it
-      - uses: actions/setup-node@v6
-        with:
-          node-version: '24'
-      - run: npm install --ignore-scripts --no-audit --no-fund
-      - run: node scripts/dealer-browser-scan.mjs
-  scan3:
-    runs-on: ubuntu-24.04
-    timeout-minutes: 20
-    env:
-      DEALER_IDS: 192,199,204,206,218
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          ref: scrape-it
-      - uses: actions/setup-node@v6
-        with:
-          node-version: '24'
-      - run: npm install --ignore-scripts --no-audit --no-fund
-      - run: node scripts/dealer-browser-scan.mjs
-  scan4:
-    runs-on: ubuntu-24.04
-    timeout-minutes: 20
-    env:
-      DEALER_IDS: 237,239,263,282,295
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          ref: scrape-it
-      - uses: actions/setup-node@v6
-        with:
-          node-version: '24'
-      - run: npm install --ignore-scripts --no-audit --no-fund
-      - run: node scripts/dealer-browser-scan.mjs
-  scan5:
-    runs-on: ubuntu-24.04
-    timeout-minutes: 20
-    env:
-      DEALER_IDS: 304,319,348,358,360
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          ref: scrape-it
-      - uses: actions/setup-node@v6
-        with:
-          node-version: '24'
-      - run: npm install --ignore-scripts --no-audit --no-fund
-      - run: node scripts/dealer-browser-scan.mjs
-  scan6:
-    runs-on: ubuntu-24.04
-    timeout-minutes: 20
-    env:
-      DEALER_IDS: 362,370,374,403
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          ref: scrape-it
-      - uses: actions/setup-node@v6
-        with:
-          node-version: '24'
-      - run: npm install --ignore-scripts --no-audit --no-fund
-      - run: node scripts/dealer-browser-scan.mjs
+      - run: echo "Retired. Use Scrape It 29 Way."
