@@ -8,6 +8,8 @@ on:
       - 'scripts/dealer-http-edge.mjs'
       - 'config/dealer-scan-targets.json'
   workflow_dispatch:
+  schedule:
+    - cron: '0 13 * * 1-5'
 
 permissions:
   contents: read
@@ -28,7 +30,7 @@ jobs:
     timeout-minutes: 3
     env:
       DEALER_IDS: ${{ matrix.dealer }}
-      SCRAPE_IT_BUILD: v7-hardened-truth-gate
+      SCRAPE_IT_BUILD: v8-control-center
     steps:
       - uses: actions/checkout@v4
         with:
