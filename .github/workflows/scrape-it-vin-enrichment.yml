@@ -1,0 +1,33 @@
+name: Scrape It VIN Enrichment
+on:
+  push:
+    branches: [scrape-it]
+    paths:
+      - 'scripts/enrich-current-vins.mjs'
+      - '.github/workflows/scrape-it-vin-enrichment.yml'
+  workflow_dispatch:
+  schedule:
+    - cron: '30 2 * * *'
+      timezone: 'America/Chicago'
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: scrape-it-vin-enrichment
+  cancel-in-progress: true
+
+jobs:
+  enrich:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    env:
+      VIN_ENRICH_LIMIT: '2000'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '24'
+      - name: Enrich trusted current VINs
+        run: node scripts/enrich-current-vins.mjs
