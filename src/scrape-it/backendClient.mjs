@@ -16,8 +16,8 @@ async function browserFallback(dealerId){
   if(!response.ok||data?.error)throw new Error(data?.error||`Browser adapter failed with HTTP ${response.status}`)
   return data
 }
-async function contactFallback(dealerId){
-  const response=await fetch('/api/dealer-contacts',{method:'POST',headers:{apikey:PUBLISHABLE_KEY,'Content-Type':'application/json'},body:JSON.stringify({dealerId})})
+async function contactFallback(dealerId,role='ANY'){
+  const response=await fetch('/api/dealer-contacts',{method:'POST',headers:{apikey:PUBLISHABLE_KEY,'Content-Type':'application/json'},body:JSON.stringify({dealerId,role})})
   const data=await response.json().catch(()=>({}))
   if(!response.ok||data?.error)throw new Error(data?.error||`Contact crawler failed with HTTP ${response.status}`)
   return data
@@ -32,41 +32,52 @@ export function updateControlItem(jobId,dealerId,patch){return callApi(CONTROL_A
 export function loadContactCandidates(dealerIds=[]){return callApi(CONTROL_API_URL,{operation:'contacts',dealerIds})}
 export function loadAdminContactWorkspace(dealerIds,adminKey){return callApi(CONTROL_API_URL,{operation:'admin_workspace',dealerIds},{'x-scrape-admin':adminKey})}
 export function reviewContact(candidateId,action,targetContactText,adminKey,notes=''){return callApi(CONTROL_API_URL,{operation:'review_contact',candidateId,action,targetContactText,notes},{'x-scrape-admin':adminKey})}
+export async function investigateDealer(website){
+  const response=await fetch('/api/investigate-dealer',{method:'POST',headers:{apikey:PUBLISHABLE_KEY,'Content-Type':'application/json'},body:JSON.stringify({website})})
+  const data=await response.json().catch(()=>({}))
+  if(!response.ok||data?.error)throw new Error(data?.error||`Dealer investigation failed with HTTP ${response.status}`)
+  return data
+}
 
 export async function scanDealerInventory(dealerId,{jobId=null}={}){
+  const started=performance.now()
   if(jobId)await updateControlItem(jobId,dealerId,{status:'RUNNING',stage:'DIRECT_HTTP',progress:12,message:'Trying direct platform adapter'})
   try{
     const direct=await callApi(DEALER_API_URL,{operation:'scan',dealerId})
     if(direct?.result?.status==='COMPLETE'){
-      if(jobId)await updateControlItem(jobId,dealerId,{status:'COMPLETE',stage:'SAVED',progress:100,mode:'DIRECT_HTTP',platform:direct.result.platform,vin_count:direct.result.vin_count||0,message:direct.result.completeness_reason||'Complete coverage proven'})
-      return{...direct,state:await loadDealerState()}
+      const elapsed_ms=Math.round(performance.now()-started)
+      if(jobId)await updateControlItem(jobId,dealerId,{status:'COMPLETE',stage:'SAVED',progress:100,mode:'DIRECT_HTTP',platform:direct.result.platform,vin_count:direct.result.vin_count||0,elapsed_ms,message:direct.result.completeness_reason||'Complete coverage proven'})
+      return{...direct,elapsed_ms,state:await loadDealerState()}
     }
     if(jobId)await updateControlItem(jobId,dealerId,{status:'RUNNING',stage:'BROWSER_FALLBACK',progress:45,mode:'BROWSER',platform:direct?.result?.platform||null,vin_count:direct?.result?.vin_count||0,message:'Direct path did not prove complete coverage; launching browser fallback'})
     const browser=await browserFallback(dealerId)
-    const state=await loadDealerState()
-    const result={dealer_id:String(dealerId),dealer_name:browser.dealer_name,status:browser.ingest?.status||browser.coverage_status,vin_count:browser.ingest?.vin_count??browser.vehicles?.length??0,platform:browser.platform,pages_scanned:browser.pages_scanned,coverage_status:browser.ingest?.coverage_status||browser.coverage_status,completeness_reason:browser.ingest?.completeness_reason||browser.completeness_reason,reported_total:browser.reported_total,change:browser.ingest?.change||null}
-    if(jobId)await updateControlItem(jobId,dealerId,{status:result.status==='COMPLETE'?'COMPLETE':'INCOMPLETE',stage:'SAVED',progress:100,mode:'BROWSER',platform:result.platform,vin_count:result.vin_count||0,message:result.completeness_reason||result.status})
-    return{result,state}
+    const state=await loadDealerState(),elapsed_ms=Math.round(performance.now()-started)
+    const result={dealer_id:String(dealerId),dealer_name:browser.dealer_name,status:browser.ingest?.status||browser.coverage_status,vin_count:browser.ingest?.vin_count??browser.vehicles?.length??0,platform:browser.platform,pages_scanned:browser.pages_scanned,coverage_status:browser.ingest?.coverage_status||browser.coverage_status,completeness_reason:browser.ingest?.completeness_reason||browser.completeness_reason,reported_total:browser.reported_total,change:browser.ingest?.change||null,elapsed_ms}
+    if(jobId)await updateControlItem(jobId,dealerId,{status:result.status==='COMPLETE'?'COMPLETE':'INCOMPLETE',stage:'SAVED',progress:100,mode:'BROWSER',platform:result.platform,vin_count:result.vin_count||0,elapsed_ms,message:result.completeness_reason||result.status})
+    return{result,state,elapsed_ms}
   }catch(e){
-    if(jobId)await updateControlItem(jobId,dealerId,{status:'ERROR',stage:'ERROR',progress:100,error_message:e.message,message:'Inventory scan failed'}).catch(()=>{})
+    const elapsed_ms=Math.round(performance.now()-started)
+    if(jobId)await updateControlItem(jobId,dealerId,{status:'ERROR',stage:'ERROR',progress:100,elapsed_ms,error_message:e.message,message:'Inventory scan failed'}).catch(()=>{})
     throw e
   }
 }
 
-export async function scanDealerContacts(dealerId,{jobId=null}={}){
-  if(jobId)await updateControlItem(jobId,dealerId,{status:'RUNNING',stage:'STAFF_DISCOVERY',progress:18,message:'Searching dealer staff and leadership pages'})
+export async function scanDealerContacts(dealerId,{jobId=null,role='ANY'}={}){
+  const started=performance.now()
+  if(jobId)await updateControlItem(jobId,dealerId,{status:'RUNNING',stage:'STAFF_DISCOVERY',progress:18,message:`Searching public staff pages for ${role}`})
   try{
-    const result=await contactFallback(dealerId)
-    if(jobId)await updateControlItem(jobId,dealerId,{status:'COMPLETE',stage:'CONTACTS_SAVED',progress:100,mode:'PUBLIC_WEB',contact_count:result.candidate_count||0,message:`${result.candidate_count||0} public decision-maker candidate(s) found`})
-    return result
+    const result=await contactFallback(dealerId,role),elapsed_ms=Math.round(performance.now()-started)
+    if(jobId)await updateControlItem(jobId,dealerId,{status:'COMPLETE',stage:'CONTACTS_SAVED',progress:100,mode:result.mode||'PUBLIC_WEB',contact_count:result.candidate_count||0,elapsed_ms,message:`${result.candidate_count||0} public candidate(s) found for ${role}`})
+    return{...result,elapsed_ms}
   }catch(e){
-    if(jobId)await updateControlItem(jobId,dealerId,{status:'ERROR',stage:'ERROR',progress:100,error_message:e.message,message:'Contact discovery failed'}).catch(()=>{})
+    const elapsed_ms=Math.round(performance.now()-started)
+    if(jobId)await updateControlItem(jobId,dealerId,{status:'ERROR',stage:'ERROR',progress:100,elapsed_ms,error_message:e.message,message:'Contact discovery failed'}).catch(()=>{})
     throw e
   }
 }
 
-export async function runDealerJob(jobType,dealerIds,{concurrency=3,onProgress=()=>{}}={}){
-  const created=await createControlJob(jobType,dealerIds,jobType==='CONTACTS'?'Decision-maker discovery':'Inventory scan')
+export async function runDealerJob(jobType,dealerIds,{concurrency=3,onProgress=()=>{},role='ANY'}={}){
+  const created=await createControlJob(jobType,dealerIds,jobType==='CONTACTS'?`Decision-maker discovery: ${role}`:'Inventory scan')
   const jobId=created.job.job_id
   onProgress({jobId,created:true,job:created.job,items:created.items||[]})
   let cursor=0
@@ -75,7 +86,7 @@ export async function runDealerJob(jobType,dealerIds,{concurrency=3,onProgress=(
       const index=cursor++;if(index>=dealerIds.length)return
       const id=String(dealerIds[index])
       try{
-        const result=jobType==='CONTACTS'?await scanDealerContacts(id,{jobId}):await scanDealerInventory(id,{jobId})
+        const result=jobType==='CONTACTS'?await scanDealerContacts(id,{jobId,role}):await scanDealerInventory(id,{jobId})
         onProgress({dealerId:id,result,jobId})
       }catch(error){onProgress({dealerId:id,error,jobId})}
     }
