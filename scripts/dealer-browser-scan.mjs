@@ -6,7 +6,7 @@ const STATE_URL = `${PROJECT_URL}/functions/v1/dealer-intel-api`
 const INGEST_URL = `${PROJECT_URL}/functions/v1/dealer-browser-ingest`
 const MAX_PAGES = 20
 const NAV_TIMEOUT = 18000
-const DEALER_TIMEOUT = 150000
+const DEALER_TIMEOUT = 30000
 
 function sleep(ms) { return new Promise((resolve) => setTimeout(resolve, ms)) }
 function normalizeHost(value) { return new URL(value).hostname.toLowerCase().replace(/^www\./, '') }
@@ -174,3 +174,4 @@ try{
   }
 }finally{await browser.close()}
 console.table(summary);console.log(JSON.stringify({summary},null,2))
+process.exit(0)
