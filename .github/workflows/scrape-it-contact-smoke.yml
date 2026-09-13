@@ -4,6 +4,7 @@ on:
     branches: [scrape-it]
     paths:
       - '.github/workflows/scrape-it-contact-smoke.yml'
+      - 'scripts/dealer-contact-http.mjs'
   workflow_dispatch:
 
 permissions:
