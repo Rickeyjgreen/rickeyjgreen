@@ -1,177 +1,26 @@
 import puppeteer from 'puppeteer-core'
 
-const PROJECT_URL = 'https://eyngapizkxsernywdyfv.supabase.co'
-const PUBLISHABLE_KEY = 'sb_publishable_Iyht5_rKaUOeHBz9sh0xRQ_eX6r8tfc'
-const STATE_URL = `${PROJECT_URL}/functions/v1/dealer-intel-api`
-const INGEST_URL = `${PROJECT_URL}/functions/v1/dealer-browser-ingest`
-const MAX_PAGES = 20
-const NAV_TIMEOUT = 18000
-const DEALER_TIMEOUT = 30000
-
-function sleep(ms) { return new Promise((resolve) => setTimeout(resolve, ms)) }
-function normalizeHost(value) { return new URL(value).hostname.toLowerCase().replace(/^www\./, '') }
-function sameHost(a, b) { try { return normalizeHost(a) === normalizeHost(b) } catch { return false } }
-function vinChecksum(vin) {
-  if (!/^[A-HJ-NPR-Z0-9]{17}$/.test(vin)) return false
-  const map = {A:1,B:2,C:3,D:4,E:5,F:6,G:7,H:8,J:1,K:2,L:3,M:4,N:5,P:7,R:9,S:2,T:3,U:4,V:5,W:6,X:7,Y:8,Z:9}
-  const weights = [8,7,6,5,4,3,2,10,0,9,8,7,6,5,4,3,2]
-  let sum = 0
-  for (let i = 0; i < 17; i++) {
-    const ch = vin[i]
-    const value = /\d/.test(ch) ? Number(ch) : map[ch]
-    if (value == null) return false
-    sum += value * weights[i]
-  }
-  return vin[8] === (sum % 11 === 10 ? 'X' : String(sum % 11))
-}
-function extractVins(text) { return [...new Set((String(text).toUpperCase().match(/[A-HJ-NPR-Z0-9]{17}/g) || []).filter(vinChecksum))].sort() }
-function detectPlatform(html, url) {
-  const s = `${url}\n${html}`.toLowerCase()
-  if (s.includes('/llm/inventory') || s.includes('dealerinspire')) return 'DEALERINSPIRE'
-  if (s.includes('dealeron.com') || s.includes('dealeron.js') || s.includes('/api/vhcliaa/')) return 'DEALERON'
-  if (s.includes('dealer.com') || s.includes('ddc-site') || (s.includes('providerid') && s.includes('ddc'))) return 'DEALER_DOT_COM'
-  if (s.includes('dealerfire')) return 'DEALERFIRE'
-  return 'GENERIC_BROWSER'
-}
-function extractReportedTotal(text) {
-  const patterns = [
-    /showing\s+\d+\s*(?:-|–|to)\s*\d+\s+of\s+(\d+)/i,
-    /(?:totalCount|totalVehicleCount|inventoryCount)[\"']?\s*[:=]\s*[\"']?(\d+)/i,
-    /data-(?:total|count|total-count|vehicle-count)=[\"'](\d+)[\"']/i,
-    /([1-9]\d{0,3})\s+(?:new\s+)?vehicles?\s+(?:found|available|in stock)/i,
-    /(?:new inventory|new vehicles?)\s*[:\-]\s*([1-9]\d{0,3})/i,
-    /([1-9]\d{0,3})\s+(?:results?|matches?)\b/i,
-  ]
-  for (const pattern of patterns) { const match = String(text).match(pattern); if (match) return Number(match[1]) }
-  return null
-}
-function extractVehicles(html, platform) {
-  const byVin = new Map()
-  const add = (v = {}) => {
-    const vin = String(v.vin || '').toUpperCase()
-    if (!vinChecksum(vin)) return
-    const previous = byVin.get(vin) || { vin }
-    byVin.set(vin, { ...previous, ...Object.fromEntries(Object.entries(v).filter(([,x]) => x !== undefined && x !== null && x !== '')), vin })
-  }
-  for (const pattern of [/[\"']vin[\"']\s*:\s*[\"']([A-HJ-NPR-Z0-9]{17})[\"']/gi,/\bVIN\s*[:#]?\s*([A-HJ-NPR-Z0-9]{17})\b/gi]) for (const match of html.matchAll(pattern)) add({ vin: match[1] })
-  for (const vin of extractVins(html)) add({ vin })
-  for (const [vin, vehicle] of byVin) {
-    const pos = html.toUpperCase().indexOf(vin)
-    if (pos < 0) continue
-    const block = html.slice(Math.max(0, pos - 1400), Math.min(html.length, pos + 2200))
-    const field = (name) => block.match(new RegExp(`[\\\"']${name}[\\\"']\\s*:\\s*[\\\"']([^\\\"']+)[\\\"']`, 'i'))?.[1]
-    const price = (name) => { const raw = field(name) || block.match(new RegExp(`${name}[^$0-9]{0,25}\\$?([0-9][0-9,]{3,})`, 'i'))?.[1]; return raw ? Number(String(raw).replace(/[^0-9.]/g, '')) || null : null }
-    add({ ...vehicle, vin, year:Number(field('year'))||null, make:field('make'), model:field('model'), trim:field('trim'), engine:field('engine'), stock_number:field('stockNumber')||field('stock'), status:field('status'), price:price('price')||price('internetPrice')||price('salePrice'), msrp:price('msrp'), vehicle_url:field('link')||field('url'), platform })
-  }
-  return [...byVin.values()].sort((a,b) => a.vin.localeCompare(b.vin))
-}
-async function getOidcToken() {
-  const requestUrl = process.env.ACTIONS_ID_TOKEN_REQUEST_URL, requestToken = process.env.ACTIONS_ID_TOKEN_REQUEST_TOKEN
-  if (!requestUrl || !requestToken) throw new Error('GitHub OIDC environment is unavailable.')
-  const response = await fetch(`${requestUrl}${requestUrl.includes('?') ? '&' : '?'}audience=scrape-it-supabase`, { headers:{Authorization:`Bearer ${requestToken}`}, signal:AbortSignal.timeout(7000) })
-  const data = await response.json(); if (!response.ok || !data.value) throw new Error(`OIDC token request failed: ${response.status}`); return data.value
-}
-async function getDealerState() {
-  let last
-  for (let attempt=1; attempt<=3; attempt++) {
-    try {
-      const response = await fetch(STATE_URL,{method:'POST',headers:{apikey:PUBLISHABLE_KEY,'Content-Type':'application/json'},body:JSON.stringify({operation:'state'}),signal:AbortSignal.timeout(7000)})
-      const data = await response.json(); if (response.ok && !data.error) return data
-      last = new Error(typeof data.error === 'string' ? data.error : `State HTTP ${response.status}`)
-    } catch (error) { last = error }
-    await sleep(250 * attempt)
-  }
-  throw last
-}
-async function autoExpand(page) {
-  let prior = 0, stable = 0
-  for (let i=0;i<6;i++) {
-    await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight)).catch(()=>{})
-    await sleep(220)
-    const state = await page.evaluate(() => {
-      const labels=/^(load more|show more|view more|more vehicles|see more)$/i
-      const el=[...document.querySelectorAll('button,a')].find(x=>labels.test((x.textContent||'').trim())&&!x.disabled)
-      if(el){el.click();return {clicked:true,h:document.body.scrollHeight}}
-      return {clicked:false,h:document.body.scrollHeight}
-    }).catch(()=>({clicked:false,h:0}))
-    stable = state.h === prior ? stable + 1 : 0; prior = state.h
-    if (!state.clicked && stable >= 1) break
-  }
-}
-async function configurePage(page) {
-  await page.setViewport({width:1280,height:900})
-  await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/152 Safari/537.36')
-  page.setDefaultNavigationTimeout(NAV_TIMEOUT)
-  await page.setRequestInterception(true)
-  page.on('request', req => {
-    const type=req.resourceType()
-    if (['image','media','font'].includes(type)) req.abort().catch(()=>{})
-    else req.continue().catch(()=>{})
-  })
-}
-async function capturePage(page,url) {
-  await page.goto(url,{waitUntil:'domcontentloaded',timeout:NAV_TIMEOUT})
-  await sleep(250)
-  await autoExpand(page)
-  return page.evaluate(() => ({html:document.documentElement.outerHTML,text:document.body?.innerText||'',url:location.href,title:document.title}))
-}
-function nextUrlFromHtml(html,current) {
-  const match=html.match(/<link[^>]+rel=[\"']next[\"'][^>]+href=[\"']([^\"']+)[\"']/i)||html.match(/<link[^>]+href=[\"']([^\"']+)[\"'][^>]+rel=[\"']next[\"']/i)||html.match(/<a[^>]+(?:rel=[\"']next[\"']|aria-label=[\"'](?:next|next page)[\"'])[^>]+href=[\"']([^\"']+)[\"']/i)
-  if(!match?.[1])return null
-  try{const u=new URL(match[1],current).toString();return sameHost(u,current)?u:null}catch{return null}
-}
-async function scanCandidate(browser,candidate,dealerWebsite) {
-  const page=await browser.newPage(); await configurePage(page)
-  try {
-    const pages=[],seen=new Set(),all=new Map();let reportedTotal=null,platform='GENERIC_BROWSER',current=candidate,exhausted=false
-    for(let i=0;i<MAX_PAGES;i++){
-      if(seen.has(current)){exhausted=true;break}seen.add(current)
-      let captured;try{captured=await capturePage(page,current)}catch(error){if(!pages.length)throw error;break}
-      if(!sameHost(captured.url,dealerWebsite))throw new Error(`Redirected off dealer host: ${captured.url}`)
-      platform=detectPlatform(captured.html,captured.url);const combined=`${captured.text}\n${captured.html}`;const total=extractReportedTotal(combined)
-      if(total!=null)reportedTotal=reportedTotal==null?total:Math.max(reportedTotal,total)
-      for(const vehicle of extractVehicles(combined,platform))all.set(vehicle.vin,{...(all.get(vehicle.vin)||{}),...vehicle})
-      pages.push({url:captured.url,title:captured.title,vin_count:extractVins(combined).length})
-      const next=nextUrlFromHtml(captured.html,captured.url);if(!next){exhausted=true;break}current=next
-    }
-    const vehicles=[...all.values()].sort((a,b)=>a.vin.localeCompare(b.vin));let coverageStatus='INCOMPLETE',reason='Browser inventory observed; exhaustive coverage not proven.'
-    if(platform==='DEALERON'&&exhausted&&pages.length>0){coverageStatus='COMPLETE';reason=`DealerOn pagination exhausted after ${pages.length} browser page(s).`}
-    else if(reportedTotal!=null&&vehicles.length===reportedTotal&&exhausted){coverageStatus='COMPLETE';reason=`Browser VIN count ${vehicles.length} reconciled exactly to reported total ${reportedTotal}.`}
-    else if(reportedTotal!=null)reason=`Observed ${vehicles.length} validated VINs but platform reports ${reportedTotal}; refusing COMPLETE.`
-    return{source_url:candidate,final_url:pages[0]?.url||candidate,platform,pages_scanned:pages.length,pagination_exhausted:exhausted,reported_total:reportedTotal,coverage_status:coverageStatus,completeness_reason:reason,vehicles,page_evidence:pages}
-  } finally { await page.close().catch(()=>{}) }
-}
-async function scanDealer(browser,dealer) {
-  const base=new URL(dealer.website)
-  const candidates=['/llm/inventory/?type=new','/searchnew.aspx','/new-inventory/index.htm','/new-vehicles/','/new-inventory/','/inventory/new'].map(p=>new URL(p,base).toString())
-  let best=null
-  for(let start=0;start<candidates.length;start+=3){
-    const results=await Promise.allSettled(candidates.slice(start,start+3).map(c=>scanCandidate(browser,c,dealer.website)))
-    for(const item of results){if(item.status!=='fulfilled')continue;const result=item.value;if(!best||result.coverage_status==='COMPLETE'||result.vehicles.length>best.vehicles.length)best=result}
-    const complete=results.filter(x=>x.status==='fulfilled').map(x=>x.value).filter(x=>x.coverage_status==='COMPLETE').sort((a,b)=>b.vehicles.length-a.vehicles.length)[0]
-    if(complete){best=complete;break}
-  }
-  if(!best)return{dealer_id:dealer.dealer_id,dealer_name:dealer.dealer_name,status:'ERROR',error:'No browser inventory candidate produced usable evidence.'}
-  return{dealer_id:dealer.dealer_id,dealer_name:dealer.dealer_name,dealer_website:dealer.website,status:best.coverage_status,...best}
-}
-async function ingest(token,result){const response=await fetch(INGEST_URL,{method:'POST',headers:{Authorization:`Bearer ${token}`,'Content-Type':'application/json'},body:JSON.stringify(result),signal:AbortSignal.timeout(15000)});const data=await response.json().catch(()=>({}));if(!response.ok||data.error)throw new Error(data.error||`Ingest HTTP ${response.status}`);return data}
-
-const chromeCandidates=['/usr/bin/google-chrome','/usr/bin/google-chrome-stable','/usr/bin/chromium','/usr/bin/chromium-browser']
-const executablePath=chromeCandidates.find(p=>{try{return process.getBuiltinModule('fs').existsSync(p)}catch{return false}})
-if(!executablePath)throw new Error('No system Chrome/Chromium found on the GitHub runner.')
-const state=await getDealerState();const requested=process.env.DEALER_IDS?new Set(process.env.DEALER_IDS.split(',').map(x=>x.trim()).filter(Boolean)):null
-const dealers=state.dealers.filter(d=>requested?requested.has(d.dealer_id):d.latest_run?.status!=='COMPLETE')
-console.log(`Fast browser worker scanning ${dealers.length} dealer(s).`)
-const browser=await puppeteer.launch({executablePath,headless:true,args:['--no-sandbox','--disable-dev-shm-usage','--disable-gpu','--disable-background-networking','--disable-sync','--metrics-recording-only']})
-const token=await getOidcToken();const summary=[]
-try{
-  for(const dealer of dealers){
-    const started=Date.now();console.log(`Scanning ${dealer.dealer_id} ${dealer.dealer_name}`)
-    let result
-    try{result=await Promise.race([scanDealer(browser,dealer),new Promise((_,reject)=>setTimeout(()=>reject(new Error('Dealer hard timeout')),DEALER_TIMEOUT))])}catch(error){result={dealer_id:dealer.dealer_id,dealer_name:dealer.dealer_name,dealer_website:dealer.website,status:'ERROR',error:error.message}}
-    if(result.status!=='ERROR'){try{result.ingest=await ingest(token,result)}catch(error){result.ingest_error=error.message}}
-    summary.push({dealer_id:dealer.dealer_id,dealer_name:dealer.dealer_name,status:result.status,vin_count:result.vehicles?.length||0,reported_total:result.reported_total??null,platform:result.platform||null,elapsed_ms:Date.now()-started,ingest_error:result.ingest_error||null});console.log(summary.at(-1))
-  }
-}finally{await browser.close()}
-console.table(summary);console.log(JSON.stringify({summary},null,2))
-process.exit(0)
+const PROJECT_URL='https://eyngapizkxsernywdyfv.supabase.co'
+const PUBLISHABLE_KEY='sb_publishable_Iyht5_rKaUOeHBz9sh0xRQ_eX6r8tfc'
+const STATE_URL=`${PROJECT_URL}/functions/v1/dealer-intel-api`
+const INGEST_URL=`${PROJECT_URL}/functions/v1/dealer-browser-ingest`
+const MAX_PAGES=20,NAV_TIMEOUT=18000,DEALER_TIMEOUT=30000
+const sleep=ms=>new Promise(r=>setTimeout(r,ms))
+const host=u=>new URL(u).hostname.toLowerCase().replace(/^www\./,'')
+const same=(a,b)=>{try{return host(a)===host(b)}catch{return false}}
+function vinOK(v){if(!/^[A-HJ-NPR-Z0-9]{17}$/.test(v))return false;const m={A:1,B:2,C:3,D:4,E:5,F:6,G:7,H:8,J:1,K:2,L:3,M:4,N:5,P:7,R:9,S:2,T:3,U:4,V:5,W:6,X:7,Y:8,Z:9},w=[8,7,6,5,4,3,2,10,0,9,8,7,6,5,4,3,2];let s=0;for(let i=0;i<17;i++){const c=v[i],n=/\d/.test(c)?+c:m[c];if(n==null)return false;s+=n*w[i]}return v[8]===(s%11===10?'X':String(s%11))}
+const vins=t=>[...new Set((String(t).toUpperCase().match(/[A-HJ-NPR-Z0-9]{17}/g)||[]).filter(vinOK))].sort()
+function platform(html,url){const s=`${url}\n${html}`.toLowerCase();if(s.includes('/llm/inventory')||s.includes('dealerinspire'))return'DEALERINSPIRE';if(s.includes('dealeron.com')||s.includes('dealeron.js')||s.includes('/api/vhcliaa/'))return'DEALERON';if(s.includes('dealer.com')||s.includes('ddc-site')||(s.includes('providerid')&&s.includes('ddc')))return'DEALER_DOT_COM';if(s.includes('dealerfire'))return'DEALERFIRE';return'GENERIC_BROWSER'}
+function reported(text,p,url){const t=String(text);if(p==='DEALERINSPIRE'){let u;try{u=new URL(url)}catch{return{total:null,proof:null}};if(!u.pathname.toLowerCase().includes('/llm/inventory')||u.searchParams.get('type')?.toLowerCase()!=='new')return{total:null,proof:null};const m=t.match(/\b([0-9][0-9,]*)\s+vehicles?\s+found\b/i);return m?{total:Number(m[1].replace(/,/g,'')),proof:'DEALER_INSPIRE_VEHICLES_FOUND'}:{total:null,proof:null}}
+ const patterns=p==='DEALER_DOT_COM'?[/showing\s+\d+\s*(?:-|–|to)\s*\d+\s+of\s+([0-9,]+)/i,/[\"'](?:totalCount|totalVehicleCount|inventoryCount)[\"']?\s*[:=]\s*[\"']?([0-9,]+)/i,/Browse our inventory of\s+([0-9,]+)\s+vehicles?/i]:[/showing\s+\d+\s*(?:-|–|to)\s*\d+\s+of\s+([0-9,]+)/i,/(?:totalCount|totalVehicleCount|inventoryCount)[\"']?\s*[:=]\s*[\"']?([0-9,]+)/i,/([1-9][0-9,]*)\s+(?:new\s+)?vehicles?\s+(?:found|available|in stock)/i];for(const re of patterns){const m=t.match(re);if(m)return{total:Number(m[1].replace(/,/g,'')),proof:p==='DEALER_DOT_COM'?'DEALER_DOT_COM_REPORTED_TOTAL':null}}return{total:null,proof:null}}
+function vehicles(text,p){const out=new Map(),add=v=>{const vin=String(v.vin||'').toUpperCase();if(vinOK(vin))out.set(vin,{...(out.get(vin)||{}),...Object.fromEntries(Object.entries(v).filter(([,x])=>x!==undefined&&x!==null&&x!=='')),vin})};for(const re of[/[\"']vin[\"']\s*:\s*[\"']([A-HJ-NPR-Z0-9]{17})[\"']/gi,/\bVIN\s*[:#]?\s*([A-HJ-NPR-Z0-9]{17})\b/gi])for(const m of String(text).matchAll(re))add({vin:m[1]});for(const vin of vins(text))add({vin});for(const[vin,v]of out){const pos=String(text).toUpperCase().indexOf(vin);if(pos<0)continue;const block=String(text).slice(Math.max(0,pos-1400),Math.min(String(text).length,pos+2200)),field=n=>block.match(new RegExp(`[\\\"']${n}[\\\"']\\s*:\\s*[\\\"']([^\\\"']+)[\\\"']`,'i'))?.[1],money=n=>{const raw=field(n)||block.match(new RegExp(`${n}[^$0-9]{0,25}\\$?([0-9][0-9,]{3,})`,'i'))?.[1];return raw?Number(String(raw).replace(/[^0-9.]/g,''))||null:null};add({...v,vin,year:Number(field('year'))||null,make:field('make'),model:field('model'),trim:field('trim'),engine:field('engine'),stock_number:field('stockNumber')||field('stock'),status:field('status'),price:money('price')||money('internetPrice')||money('salePrice'),msrp:money('msrp'),vehicle_url:field('link')||field('url'),platform:p})}return[...out.values()].sort((a,b)=>a.vin.localeCompare(b.vin))}
+async function oidc(){const u=process.env.ACTIONS_ID_TOKEN_REQUEST_URL,t=process.env.ACTIONS_ID_TOKEN_REQUEST_TOKEN;if(!u||!t)throw Error('GitHub OIDC environment unavailable');const r=await fetch(`${u}${u.includes('?')?'&':'?'}audience=scrape-it-supabase`,{headers:{Authorization:`Bearer ${t}`},signal:AbortSignal.timeout(7000)}),d=await r.json();if(!r.ok||!d.value)throw Error(`OIDC ${r.status}`);return d.value}
+async function state(){let e;for(let i=1;i<=3;i++){try{const r=await fetch(STATE_URL,{method:'POST',headers:{apikey:PUBLISHABLE_KEY,'content-type':'application/json'},body:JSON.stringify({operation:'state'}),signal:AbortSignal.timeout(7000)}),d=await r.json();if(r.ok&&!d.error)return d;e=Error(d.error||`state ${r.status}`)}catch(x){e=x}await sleep(250*i)}throw e}
+async function configure(page){await page.setViewport({width:1280,height:900});await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/152 Safari/537.36');page.setDefaultNavigationTimeout(NAV_TIMEOUT);await page.setRequestInterception(true);page.on('request',r=>['image','media','font'].includes(r.resourceType())?r.abort().catch(()=>{}):r.continue().catch(()=>{}))}
+async function expand(page){let prior=0,stable=0;for(let i=0;i<6;i++){await page.evaluate(()=>window.scrollTo(0,document.body.scrollHeight)).catch(()=>{});await sleep(220);const x=await page.evaluate(()=>{const re=/^(load more|show more|view more|more vehicles|see more)$/i,el=[...document.querySelectorAll('button,a')].find(x=>re.test((x.textContent||'').trim())&&!x.disabled);if(el){el.click();return{clicked:true,h:document.body.scrollHeight}}return{clicked:false,h:document.body.scrollHeight}}).catch(()=>({clicked:false,h:0}));stable=x.h===prior?stable+1:0;prior=x.h;if(!x.clicked&&stable>=1)break}}
+async function capture(page,url){await page.goto(url,{waitUntil:'domcontentloaded',timeout:NAV_TIMEOUT});await sleep(300);await expand(page);return page.evaluate(()=>({html:document.documentElement.outerHTML,text:document.body?.innerText||'',url:location.href,title:document.title}))}
+function next(html,current){const m=String(html).match(/<link[^>]+rel=[\"']next[\"'][^>]+href=[\"']([^\"']+)/i)||String(html).match(/<link[^>]+href=[\"']([^\"']+)[\"'][^>]+rel=[\"']next[\"']/i)||String(html).match(/<a[^>]+(?:rel=[\"']next[\"']|aria-label=[\"'](?:next|next page)[\"'])[^>]+href=[\"']([^\"']+)/i);if(!m)return null;try{const u=new URL(m[1],current).toString();return same(u,current)?u:null}catch{return null}}
+async function candidate(browser,start,website){const page=await browser.newPage();await configure(page);try{const pages=[],seen=new Set(),all=new Map();let current=start,reportedTotal=null,proof=null,p='GENERIC_BROWSER',exhausted=false;for(let i=0;i<MAX_PAGES;i++){if(seen.has(current)){exhausted=true;break}seen.add(current);let c;try{c=await capture(page,current)}catch(e){if(!pages.length)throw e;break}if(!same(c.url,website))throw Error(`Redirected off dealer host: ${c.url}`);p=platform(c.html,c.url);const combined=`${c.text}\n${c.html}`,rp=reported(combined,p,c.url);if(rp.total!=null)reportedTotal=reportedTotal==null?rp.total:Math.max(reportedTotal,rp.total);if(rp.proof)proof=rp.proof;for(const v of vehicles(combined,p))all.set(v.vin,{...(all.get(v.vin)||{}),...v});pages.push({url:c.url,title:c.title,vin_count:vins(combined).length});const n=next(c.html,c.url);if(!n){exhausted=true;break}current=n}const vs=[...all.values()].sort((a,b)=>a.vin.localeCompare(b.vin));let coverage='INCOMPLETE',reason='Browser inventory observed; platform-specific exhaustive coverage not proven.';if(p==='DEALERON'&&exhausted&&pages.length&&vs.length){coverage='COMPLETE';reason=`DealerOn pagination exhausted after ${pages.length} browser page(s).`}else if(p==='DEALER_DOT_COM'&&exhausted&&reportedTotal!=null&&vs.length===reportedTotal&&vs.length){coverage='COMPLETE';reason=`Dealer.com browser VIN count ${vs.length} reconciled exactly to reported total ${reportedTotal}.`}else if(p==='DEALERINSPIRE'&&proof==='DEALER_INSPIRE_VEHICLES_FOUND'&&exhausted&&reportedTotal!=null&&vs.length===reportedTotal&&vs.length>1){coverage='COMPLETE';reason=`Dealer Inspire strict vehicles-found count ${reportedTotal} reconciled to ${vs.length} validated VINs.`}else if(reportedTotal!=null)reason=`Observed ${vs.length} validated VINs vs reported ${reportedTotal}; refusing COMPLETE without valid ${p} proof.`;return{source_url:start,final_url:pages[0]?.url||start,platform:p,pages_scanned:pages.length,pagination_exhausted:exhausted,reported_total:reportedTotal,coverage_proof:proof,coverage_status:coverage,completeness_reason:reason,vehicles:vs,page_evidence:pages}}finally{await page.close().catch(()=>{})}}
+async function scan(browser,dealer){const base=new URL(dealer.website),paths=['/llm/inventory/?type=new','/searchnew.aspx','/new-inventory/index.htm','/new-vehicles/','/new-inventory/','/inventory/new'],urls=paths.map(p=>new URL(p,base).toString());let best=null;for(let i=0;i<urls.length;i+=3){const batch=await Promise.allSettled(urls.slice(i,i+3).map(u=>candidate(browser,u,dealer.website)));const ok=batch.filter(x=>x.status==='fulfilled').map(x=>x.value);for(const x of ok)if(!best||x.coverage_status==='COMPLETE'||x.vehicles.length>best.vehicles.length)best=x;const complete=ok.filter(x=>x.coverage_status==='COMPLETE').sort((a,b)=>b.vehicles.length-a.vehicles.length)[0];if(complete){best=complete;break}}if(!best)return{dealer_id:dealer.dealer_id,dealer_name:dealer.dealer_name,status:'ERROR',error:'No browser inventory candidate produced usable evidence.'};return{dealer_id:dealer.dealer_id,dealer_name:dealer.dealer_name,dealer_website:dealer.website,status:best.coverage_status,...best}}
+async function ingest(token,result){const r=await fetch(INGEST_URL,{method:'POST',headers:{Authorization:`Bearer ${token}`,'content-type':'application/json'},body:JSON.stringify(result),signal:AbortSignal.timeout(15000)}),d=await r.json().catch(()=>({}));if(!r.ok||d.error)throw Error(d.error||`ingest ${r.status}`);return d}
+const paths=['/usr/bin/google-chrome','/usr/bin/google-chrome-stable','/usr/bin/chromium','/usr/bin/chromium-browser'],fs=process.getBuiltinModule('fs'),executablePath=paths.find(p=>fs.existsSync(p));if(!executablePath)throw Error('No system Chrome/Chromium found');const st=await state(),requested=process.env.DEALER_IDS?new Set(process.env.DEALER_IDS.split(',').map(x=>x.trim()).filter(Boolean)):null,dealers=st.dealers.filter(d=>requested?requested.has(d.dealer_id):d.latest_run?.status!=='COMPLETE');console.log(`Hardened browser worker scanning ${dealers.length} dealer(s).`);const browser=await puppeteer.launch({executablePath,headless:true,args:['--no-sandbox','--disable-dev-shm-usage','--disable-gpu','--disable-background-networking','--disable-sync','--metrics-recording-only']}),token=await oidc(),summary=[];try{for(const dealer of dealers){const started=Date.now();console.log(`Scanning ${dealer.dealer_id} ${dealer.dealer_name}`);let result;try{result=await Promise.race([scan(browser,dealer),new Promise((_,rej)=>setTimeout(()=>rej(Error('Dealer hard timeout')),DEALER_TIMEOUT))])}catch(e){result={dealer_id:dealer.dealer_id,dealer_name:dealer.dealer_name,dealer_website:dealer.website,status:'ERROR',error:e.message}}if(result.status!=='ERROR'){try{result.ingest=await ingest(token,result)}catch(e){result.ingest_error=e.message}}summary.push({dealer_id:dealer.dealer_id,dealer_name:dealer.dealer_name,status:result.ingest?.status||result.status,vin_count:result.vehicles?.length||0,reported_total:result.reported_total??null,coverage_proof:result.coverage_proof||null,platform:result.platform||null,elapsed_ms:Date.now()-started,ingest_error:result.ingest_error||null});console.log(summary.at(-1))}}finally{await browser.close()}console.table(summary);console.log(JSON.stringify({summary},null,2));process.exit(0)
