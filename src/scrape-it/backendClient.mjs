@@ -1,6 +1,7 @@
 const PROJECT_URL='https://eyngapizkxsernywdyfv.supabase.co'
 const PUBLISHABLE_KEY='sb_publishable_Iyht5_rKaUOeHBz9sh0xRQ_eX6r8tfc'
 const DEALER_API_URL=`${PROJECT_URL}/functions/v1/dealer-intel-api`
+const DEALER_STATE_URL=`${PROJECT_URL}/functions/v1/dealer-intel-state-v2`
 const CONTROL_API_URL=`${PROJECT_URL}/functions/v1/scrape-control-api`
 
 async function callApi(url,payload,extraHeaders={}){
@@ -22,7 +23,7 @@ async function contactFallback(dealerId){
   return data
 }
 
-export function loadDealerState(){return callApi(DEALER_API_URL,{operation:'state'})}
+export function loadDealerState(){return callApi(DEALER_STATE_URL,{operation:'state'})}
 export function loadControlState(jobId){return callApi(CONTROL_API_URL,{operation:'state',...(jobId?{jobId}:{})})}
 export function createControlJob(jobType,dealerIds,label=''){return callApi(CONTROL_API_URL,{operation:'create_job',jobType,dealerIds,label})}
 export function cancelControlJob(jobId){return callApi(CONTROL_API_URL,{operation:'cancel_job',jobId})}
@@ -38,7 +39,7 @@ export async function scanDealerInventory(dealerId,{jobId=null}={}){
     const direct=await callApi(DEALER_API_URL,{operation:'scan',dealerId})
     if(direct?.result?.status==='COMPLETE'){
       if(jobId)await updateControlItem(jobId,dealerId,{status:'COMPLETE',stage:'SAVED',progress:100,mode:'DIRECT_HTTP',platform:direct.result.platform,vin_count:direct.result.vin_count||0,message:direct.result.completeness_reason||'Complete coverage proven'})
-      return direct
+      return{...direct,state:await loadDealerState()}
     }
     if(jobId)await updateControlItem(jobId,dealerId,{status:'RUNNING',stage:'BROWSER_FALLBACK',progress:45,mode:'BROWSER',platform:direct?.result?.platform||null,vin_count:direct?.result?.vin_count||0,message:'Direct path did not prove complete coverage; launching browser fallback'})
     const browser=await browserFallback(dealerId)
