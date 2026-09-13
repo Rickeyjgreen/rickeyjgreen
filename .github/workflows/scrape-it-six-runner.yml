@@ -1,6 +1,11 @@
 name: Scrape It Six Runner Scan
 on:
   workflow_dispatch:
+  push:
+    branches: [scrape-it]
+    paths:
+      - '.github/workflows/scrape-it-six-runner.yml'
+      - 'scripts/dealer-browser-scan.mjs'
 permissions:
   contents: read
   id-token: write
