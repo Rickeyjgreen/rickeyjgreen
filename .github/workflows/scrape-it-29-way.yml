@@ -7,6 +7,7 @@ on:
       - 'scripts/dealer-browser-scan.mjs'
       - 'scripts/dealer-http-edge.mjs'
       - 'scripts/dealer-inspire-browser.mjs'
+      - 'scripts/dealer-eprocess-http-v2.mjs'
       - 'config/dealer-scan-targets.json'
   workflow_dispatch:
   schedule:
@@ -31,7 +32,7 @@ jobs:
     timeout-minutes: 3
     env:
       DEALER_IDS: ${{ matrix.dealer }}
-      SCRAPE_IT_BUILD: v9-coverage-hardening
+      SCRAPE_IT_BUILD: v10-platform-adapters
     steps:
       - uses: actions/checkout@v4
         with:
@@ -42,13 +43,17 @@ jobs:
       - name: Direct HTTP platform scan
         id: http
         run: node scripts/dealer-http-edge.mjs
-      - name: Install browser client only for fallback
+      - name: Dealer eProcess exhaustive HTTP scan
+        id: eprocess
         if: steps.http.outputs.browser_needed == 'true'
+        run: node scripts/dealer-eprocess-http-v2.mjs
+      - name: Install browser client only for fallback
+        if: steps.http.outputs.browser_needed == 'true' && steps.eprocess.outputs.browser_needed == 'true'
         run: npm install --ignore-scripts --no-audit --no-fund
       - name: Exhaustive Dealer Inspire browser pagination
         id: inspire
-        if: steps.http.outputs.browser_needed == 'true'
+        if: steps.http.outputs.browser_needed == 'true' && steps.eprocess.outputs.browser_needed == 'true'
         run: node scripts/dealer-inspire-browser.mjs
       - name: Generic browser fallback only
-        if: steps.http.outputs.browser_needed == 'true' && steps.inspire.outputs.browser_needed == 'true'
+        if: steps.http.outputs.browser_needed == 'true' && steps.eprocess.outputs.browser_needed == 'true' && steps.inspire.outputs.browser_needed == 'true'
         run: node scripts/dealer-browser-scan.mjs
