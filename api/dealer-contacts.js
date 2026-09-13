@@ -55,7 +55,7 @@ export default async function handler(req,res){
             const lines=raw.split(/\n+/).map(clean).filter(Boolean).slice(0,20),title=lines.find(x=>role.test(x));if(!title)continue
             const ti=lines.indexOf(title),near=[...lines.slice(Math.max(0,ti-3),ti),...lines.slice(ti+1,Math.min(lines.length,ti+4))],person=near.find(plausibleName)||lines.find(plausibleName);if(!person)continue
             const email=(raw.match(emailRe)||[])[0]||null,phone=(raw.match(phoneRe)||[])[0]||null
-            out.push({person_name:person,title,department:null,email,phone,confidence:email||phone?.length?.8:.76,raw_excerpt:clean(raw).slice(0,900)})
+            out.push({person_name:person,title,department:null,email,phone,confidence:(email||phone)?0.88:0.76,raw_excerpt:clean(raw).slice(0,900)})
           }
           const key=x=>`${x.person_name.toLowerCase()}|${x.title.toLowerCase()}|${x.email||''}|${x.phone||''}`
           return [...new Map(out.map(x=>[key(x),x])).values()].slice(0,60)
