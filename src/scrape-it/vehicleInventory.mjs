@@ -2,6 +2,10 @@ export function buildVehicleRows(dealers = []) {
   return dealers.flatMap((dealer) => {
     const snapshot = dealer.latest_snapshot;
     const vehicles = Array.isArray(snapshot?.vehicles) ? snapshot.vehicles : [];
+    const platform = snapshot?.platform || dealer.latest_run?.platform || null;
+    const adapter = snapshot?.adapter_name || dealer.latest_run?.adapter_name || '';
+    const unsafeDealerInspire = platform === 'DEALERINSPIRE' && /^github-browser-v\d+/i.test(adapter);
+    if (unsafeDealerInspire) return [];
     const complete = dealer.latest_run?.status === 'COMPLETE' && snapshot?.coverage_status === 'COMPLETE';
     return vehicles.map((vehicle) => ({
       ...vehicle,
