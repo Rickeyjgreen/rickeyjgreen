@@ -32,3 +32,5 @@ const results = await Promise.all(activeGroups.map(run))
 const failed = results.filter((result) => result.code !== 0)
 console.log(JSON.stringify({ workers: results.length, failed }, null, 2))
 if (failed.length) process.exit(1)
+
+// Parallel full-book scan trigger marker.
