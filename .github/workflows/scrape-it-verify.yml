@@ -5,9 +5,11 @@ on:
     paths:
       - 'api/**'
       - 'src/scrape-it/**'
+      - 'scripts/dealer-contact-http.mjs'
       - 'package.json'
       - 'package-lock.json'
       - '.github/workflows/scrape-it-verify.yml'
+      - '.github/workflows/scrape-it-contacts-weekly.yml'
   workflow_dispatch:
 
 permissions:
@@ -30,6 +32,8 @@ jobs:
           node-version: '24'
       - name: Install dependencies
         run: npm install --ignore-scripts --no-audit --no-fund
+      - name: Verify acquisition worker syntax
+        run: node --check scripts/dealer-contact-http.mjs
       - name: Verify serverless ESM imports
         run: node -e "await import('./api/dealer-contacts.js'); await import('./api/dealer-browser.js'); await import('./api/investigate-dealer.js'); console.log('serverless imports ok')"
       - name: Unit tests
