@@ -1,0 +1,26 @@
+name: Scrape It Contact Smoke
+on:
+  push:
+    branches: [scrape-it]
+    paths:
+      - '.github/workflows/scrape-it-contact-smoke.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  smoke:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 4
+    env:
+      DEALER_IDS: '218'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: scrape-it
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '24'
+      - name: Run direct HTTP contact acquisition smoke test
+        run: node scripts/dealer-contact-http.mjs
