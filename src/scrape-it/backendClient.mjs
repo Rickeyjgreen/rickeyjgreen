@@ -67,6 +67,7 @@ export async function scanDealerContacts(dealerId,{jobId=null}={}){
 export async function runDealerJob(jobType,dealerIds,{concurrency=3,onProgress=()=>{}}={}){
   const created=await createControlJob(jobType,dealerIds,jobType==='CONTACTS'?'Decision-maker discovery':'Inventory scan')
   const jobId=created.job.job_id
+  onProgress({jobId,created:true,job:created.job,items:created.items||[]})
   let cursor=0
   async function worker(){
     while(true){
