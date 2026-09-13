@@ -1,0 +1,39 @@
+name: Scrape It Verify
+on:
+  push:
+    branches: [scrape-it]
+    paths:
+      - 'api/**'
+      - 'src/scrape-it/**'
+      - 'package.json'
+      - 'package-lock.json'
+      - '.github/workflows/scrape-it-verify.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: scrape-it-verify
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: scrape-it
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '24'
+          cache: npm
+      - name: Install pinned dependencies
+        run: npm ci --ignore-scripts --no-audit --no-fund
+      - name: Verify serverless ESM imports
+        run: node -e "await import('./api/dealer-contacts.js'); await import('./api/dealer-browser.js'); await import('./api/investigate-dealer.js'); console.log('serverless imports ok')"
+      - name: Unit tests
+        run: npm test
+      - name: Production build
+        run: npm run build
