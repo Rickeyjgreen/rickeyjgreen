@@ -1,7 +1,7 @@
 const PROJECT_URL='https://eyngapizkxsernywdyfv.supabase.co'
 const INGEST_URL=`${PROJECT_URL}/functions/v1/vin-reference-ingest`
 const VPIC='https://vpic.nhtsa.dot.gov/api/vehicles/DecodeVINValuesBatch/'
-const WORKER_VERSION='2.1'
+const WORKER_VERSION='2.2'
 const BATCH=50
 const ROUND_LIMIT=Math.max(50,Math.min(1000,Number(process.env.VIN_ENRICH_ROUND_LIMIT||1000)))
 const MAX_ROUNDS=Math.max(1,Math.min(10,Number(process.env.VIN_ENRICH_MAX_ROUNDS||5)))
