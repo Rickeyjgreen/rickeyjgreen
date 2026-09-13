@@ -1,183 +1,68 @@
-import React, { useEffect, useMemo, useState } from 'react';
-import {
-  Activity,
-  AlertTriangle,
-  CheckCircle2,
-  ChevronRight,
-  Database,
-  ExternalLink,
-  FileSearch,
-  Gauge,
-  Radar,
-  RefreshCw,
-  ShieldCheck,
-  ThumbsUp,
-  XCircle,
-} from 'lucide-react';
-import {
-  FEEDBACK_OPTIONS,
-  PIPELINE_STAGES,
-  SOURCE_TYPES,
-  buildSourceRegistryEntry,
-} from './domain.mjs';
-import { loadBackendState, runApprovedSource, submitFeedback } from './backendClient.mjs';
-import DealerBookPanel from './DealerBookPanel.jsx';
+import React,{useEffect,useMemo,useState} from 'react'
+import {AlertTriangle,Building2,CheckCircle2,Download,Globe2,MapPin,Radar,RefreshCw,Search,ShieldCheck,SquareStack,Truck,XCircle} from 'lucide-react'
+import {exportCsv,loadDealerState,runDealerJob} from './backendClient.mjs'
+import ScanHUD from './ScanHUD.jsx'
+import ContactsPanel from './ContactsPanel.jsx'
+import VehicleInventoryPanel from './VehicleInventoryPanel.jsx'
 
-const DEFAULT_QUERY = { modelYear: 2025, make: 'Chevrolet', model: 'Silverado 1500' };
-const EMPTY_STATS = { raw_records: 0, change_events: 0, feedback_events: 0 };
+function Badge({children,tone='idle'}){return <span className={`di-badge di-${tone}`}>{children}</span>}
+function statusTone(s){return s==='COMPLETE'?'good':s==='INCOMPLETE'?'warn':s==='ERROR'?'bad':'idle'}
 
-function Pill({ children, tone = 'neutral' }) {
-  return <span className={`si-pill si-pill-${tone}`}>{children}</span>;
-}
+export default function ScrapeItApp(){
+  const [state,setState]=useState({dealers:[],stats:{dealer_count:0,scanned_count:0,incomplete_count:0,error_count:0,vin_count:0,material_changes:0,regions:{}}})
+  const [selected,setSelected]=useState(new Set())
+  const [query,setQuery]=useState('')
+  const [region,setRegion]=useState('ALL')
+  const [activeJobId,setActiveJobId]=useState(null)
+  const [running,setRunning]=useState(false)
+  const [message,setMessage]=useState(null)
 
-function StageRail({ stageState }) {
-  return <div className="si-stage-rail">{PIPELINE_STAGES.map((stage) => {
-    const value = stageState[stage] || 'PENDING';
-    return <div key={stage} className={`si-stage si-stage-${value.toLowerCase()}`}><span>{stage}</span><strong>{value}</strong></div>;
-  })}</div>;
-}
+  async function refresh(){const next=await loadDealerState();setState(next);return next}
+  useEffect(()=>{refresh().catch(e=>setMessage({type:'error',text:e.message}))},[])
 
-function EvidenceDrawer({ evidence, rawRecord, observations, onClose }) {
-  if (!evidence) return null;
-  return <aside className="si-drawer" aria-label="Evidence drawer">
-    <div className="si-drawer-head"><div><p className="si-kicker">Evidence</p><h2>{evidence.evidence_class}</h2></div><button onClick={onClose} className="si-icon-button" aria-label="Close evidence"><XCircle /></button></div>
-    <div className="si-evidence-grid">
-      <div><span>Source</span><strong>{evidence.source_id}</strong></div>
-      <div><span>Observed</span><strong>{new Date(evidence.observed_at).toLocaleString()}</strong></div>
-      <div><span>Confidence</span><strong>{Math.round(Number(evidence.confidence) * 100)}%</strong></div>
-      <div><span>Raw ID</span><strong>{evidence.raw_id}</strong></div>
-    </div>
-    <a className="si-source-link" href={evidence.source_url} target="_blank" rel="noreferrer">Open authoritative source <ExternalLink size={16} /></a>
-    <h3>Normalized observations</h3>
-    <div className="si-observation-list">{observations.length ? observations.map((item) => <article key={item.observation_id}><div><strong>{item.campaign_number || 'Unknown campaign'}</strong><Pill tone={item.park_it || item.park_outside ? 'danger' : 'info'}>{item.component || 'Component unspecified'}</Pill></div><p>{item.summary || 'No summary returned.'}</p><small>{item.raw_excerpt}</small></article>) : <p>No campaigns returned in this observation.</p>}</div>
-    <h3>Immutable raw capture</h3>
-    <pre className="si-raw-preview">{rawRecord?.raw_text ? rawRecord.raw_text.slice(0, 5000) : 'Raw record unavailable.'}</pre>
-  </aside>;
-}
+  const regions=useMemo(()=>['ALL',...Object.keys(state.stats?.regions||{}).sort()],[state.stats])
+  const visible=useMemo(()=>state.dealers.filter(d=>{const hay=`${d.dealer_name} ${d.dealer_id} ${d.city} ${d.state} ${d.latest_run?.platform||''}`.toLowerCase();return(!query||hay.includes(query.toLowerCase()))&&(region==='ALL'||d.region===region)}),[state.dealers,query,region])
+  const selectedIds=useMemo(()=>[...selected],[selected])
 
-function ActionCard({ action, onEvidence, onFeedback, latestFeedback }) {
-  if (!action) return null;
-  return <article className="si-action-card">
-    <div className="si-action-top"><Pill tone={action.bucket === 'NOW' ? 'danger' : action.bucket === 'VERIFY' ? 'warning' : 'info'}>{action.bucket}</Pill><span>{action.action_type}</span></div>
-    <h2>{action.recommended_next_step}</h2>
-    <p><strong>Why now:</strong> {action.why_now}</p>
-    <blockquote>{action.suggested_call_question}</blockquote>
-    <div className="si-uncertainty"><AlertTriangle size={18} /><div><strong>Uncertainty</strong>{(action.uncertainties || []).map((item) => <span key={item}>{item}</span>)}</div></div>
-    <div className="si-action-controls"><button onClick={onEvidence}><FileSearch size={17} /> Evidence</button>{latestFeedback && <Pill tone="success">{latestFeedback}</Pill>}</div>
-    <div className="si-feedback"><span>Feedback</span>{FEEDBACK_OPTIONS.map((item) => <button key={item} onClick={() => onFeedback(item)}>{item.replaceAll('_', ' ')}</button>)}</div>
-  </article>;
-}
+  function toggle(id){setSelected(cur=>{const n=new Set(cur);n.has(id)?n.delete(id):n.add(id);return n})}
+  function choose(kind){let ids=[];if(kind==='ALL')ids=visible.map(d=>d.dealer_id);if(kind==='FAILED')ids=visible.filter(d=>d.latest_run?.status==='ERROR').map(d=>d.dealer_id);if(kind==='INCOMPLETE')ids=visible.filter(d=>d.latest_run?.status==='INCOMPLETE').map(d=>d.dealer_id);if(kind==='CLEAR')ids=[];setSelected(new Set(ids))}
 
-function SourceRegistry({ source, runtimeSource }) {
-  const fields = [
-    ['Type', source.source_type], ['Tier', `Tier ${source.source_tier}`], ['Trust', source.trust_level],
-    ['Status', runtimeSource?.status || source.status], ['Extraction', source.extraction_method], ['Geography', source.geography],
-    ['Login', source.requires_login ? 'Required' : 'No'], ['Browser', source.requires_browser ? 'Required' : 'No'],
-    ['Refresh', source.refresh_frequency], ['Access', source.robots_or_access_status],
-  ];
-  return <section className="si-panel">
-    <div className="si-section-head"><div><p className="si-kicker">Source Registry</p><h2>Controlled source, explicit provenance</h2></div><Pill tone="success">{runtimeSource?.status || source.status}</Pill></div>
-    <div className="si-source-card"><div><ShieldCheck size={22} /><div><strong>{source.source_name}</strong><span>{source.domain}</span></div></div><a href={source.exact_url} target="_blank" rel="noreferrer">Open source <ExternalLink size={15} /></a></div>
-    <div className="si-source-meta">{fields.map(([label, value]) => <div key={label}><span>{label}</span><strong>{String(value)}</strong></div>)}</div>
-    <details className="si-details"><summary>Expected fields + source health</summary><p>{source.notes}</p><p>Last success: {runtimeSource?.last_success_at ? new Date(runtimeSource.last_success_at).toLocaleString() : 'No successful run yet'} · Failures: {runtimeSource?.failure_count ?? 0}</p><div className="si-tag-row">{source.expected_fields.map((field) => <Pill key={field}>{field}</Pill>)}</div></details>
-  </section>;
-}
+  async function runInventory(){if(!selected.size)return setMessage({type:'warning',text:'Select at least one dealer.'});setRunning(true);setMessage(null);try{let jobId=null;await runDealerJob('INVENTORY',selectedIds,{concurrency:4,onProgress:x=>{jobId=x.jobId;setActiveJobId(x.jobId)}});if(jobId)setActiveJobId(jobId);const next=await refresh();const complete=selectedIds.filter(id=>next.dealers.find(d=>d.dealer_id===id)?.latest_run?.status==='COMPLETE').length;setMessage({type:'success',text:`Inventory run finished for ${selectedIds.length} dealer(s). ${complete} currently completeness-proven.`})}catch(e){setMessage({type:'error',text:e.message})}finally{setRunning(false)}}
 
-function latestToResult(latest) {
-  if (!latest) return null;
-  return { change: latest.change, evidence: latest.evidence, action: latest.action, rawRecord: latest.raw, observations: latest.observations || [] };
-}
+  function exportDealers(){exportCsv('scrape-it-dealer-status.csv',visible.map(d=>({dealer_id:d.dealer_id,dealer_name:d.dealer_name,city:d.city,state:d.state,region:d.region,status:d.latest_run?.status||'UNSCANNED',coverage_status:d.latest_run?.coverage_status||'',platform:d.latest_run?.platform||'',adapter:d.latest_run?.adapter_name||'',vin_count:d.latest_snapshot?.vin_count||0,last_scanned:d.latest_run?.finished_at||'',inventory_url:d.latest_run?.inventory_url||'',completeness_reason:d.latest_run?.completeness_reason||'',error:d.latest_run?.error_message||''})))}
 
-export default function ScrapeItApp() {
-  const [query, setQuery] = useState(DEFAULT_QUERY);
-  const [stageState, setStageState] = useState({ RECEIVED: 'READY' });
-  const [running, setRunning] = useState(false);
-  const [runResult, setRunResult] = useState(null);
-  const [drawerOpen, setDrawerOpen] = useState(false);
-  const [feedback, setFeedback] = useState(null);
-  const [error, setError] = useState(null);
-  const [stats, setStats] = useState(EMPTY_STATS);
-  const [failures, setFailures] = useState([]);
-  const [runtimeSource, setRuntimeSource] = useState(null);
-  const source = useMemo(() => buildSourceRegistryEntry(query), [query]);
-
-  useEffect(() => {
-    let active = true;
-    loadBackendState(DEFAULT_QUERY).then((state) => {
-      if (!active) return;
-      setStats(state.stats || EMPTY_STATS);
-      setFailures(state.failures || []);
-      setRuntimeSource(state.source || null);
-      setRunResult(latestToResult(state.latest));
-      setFeedback(state.latest?.latest_feedback?.feedback_status || null);
-    }).catch((caught) => active && setError({ code: 'BACKEND_STATE_FAILED', message: caught.message }));
-    return () => { active = false; };
-  }, []);
-
-  async function runSource() {
-    setRunning(true); setError(null); setFeedback(null);
-    setStageState({ RECEIVED: 'DONE', FETCHING: 'RUNNING' });
-    try {
-      const state = await runApprovedSource(query);
-      setStageState({ RECEIVED:'DONE', FETCHING:'DONE', FETCHED:'DONE', PARSED:'DONE', NORMALIZED:'DONE', DIFFED:'DONE', ACTIONED:'DONE' });
-      setStats(state.stats || EMPTY_STATS); setFailures(state.failures || []); setRuntimeSource(state.source || null);
-      setRunResult(latestToResult(state.latest));
-    } catch (caught) {
-      setStageState((current) => ({ ...current, FETCHING:'ERROR' }));
-      setError({ code:'PIPELINE_ERROR', message:caught.message });
-      try { const state = await loadBackendState(query); setStats(state.stats || EMPTY_STATS); setFailures(state.failures || []); setRuntimeSource(state.source || null); } catch {}
-    } finally { setRunning(false); }
-  }
-
-  async function recordFeedback(type) {
-    if (!runResult?.action?.action_id) return;
-    try {
-      await submitFeedback(runResult.action.action_id, type);
-      setFeedback(type);
-      setStats((current) => ({ ...current, feedback_events: current.feedback_events + 1 }));
-    } catch (caught) { setError({ code:'FEEDBACK_FAILED', message:caught.message }); }
-  }
-
-  const changeType = runResult?.change?.signal_type || runResult?.change?.change_type;
   return <div className="scrape-it-shell">
-    <header className="si-header">
-      <div><div className="si-brand"><Radar size={25} /><span>Scrape It</span></div><p>Evidence-aware automotive market intelligence</p></div>
-      <div className="si-header-badges"><Pill tone="warning">SCRAPE-IT BRANCH PREVIEW</Pill><Pill tone="success">Isolated Supabase persistence</Pill></div>
-    </header>
-
+    <header className="si-header"><div><div className="si-brand"><Radar size={25}/><span>Scrape It</span></div><p>Fast public-web dealer inventory + decision-maker discovery</p></div><div className="si-header-badges"><Badge tone="good">SCRAPE-IT PREVIEW</Badge><Badge tone="idle">MAIN UNTOUCHED</Badge></div></header>
     <main className="si-main">
-      <section className="si-hero"><div><p className="si-kicker">Working sales-intelligence testbed</p><h1>Dealer book + public market evidence → changes → action.</h1><p>The test site now combines your sample dealer universe with controlled public-source observation. It preserves what was actually observed, what changed, and what still needs verification before a sales call.</p></div><div className="si-hero-metric"><span>Canonical rule</span><strong>No invented dealer need.</strong><p>Public inventory movement is a lead for verification, not proof of a sale, trade, buyer need, or dealer willingness.</p></div></section>
+      <section className="si-hero si-hero-compact"><div><p className="si-kicker">Operator console</p><h1>Pick dealers. Scrape them. Keep the evidence.</h1><p>Inventory and public staff discovery stay separate, source-backed, and reviewable. COMPLETE means exhaustive public inventory coverage was proven; anything less stays observation-only.</p></div><div className="si-hero-metric"><span>Current book</span><strong>{state.stats.dealer_count||state.dealers.length} dealers</strong><p>{state.stats.scanned_count||0} complete · {state.stats.incomplete_count||0} incomplete · {state.stats.error_count||0} errors</p></div></section>
 
-      <DealerBookPanel />
-
-      <section className="si-grid si-grid-3">
-        <article className="si-metric"><Database /><span>NHTSA raw captures</span><strong>{stats.raw_records}</strong><small>Append-only PostgreSQL evidence</small></article>
-        <article className="si-metric"><Activity /><span>NHTSA change events</span><strong>{stats.change_events}</strong><small>Baseline + meaningful diffs retained</small></article>
-        <article className="si-metric"><ThumbsUp /><span>Feedback events</span><strong>{stats.feedback_events}</strong><small>Append-only; never rewrites evidence</small></article>
+      <section className="si-panel">
+        <div className="si-section-head"><div><p className="si-kicker">Dealer controls</p><h2>Select one, several, filtered groups, or the full book</h2></div><div className="si-header-badges"><Badge tone="good"><ShieldCheck size={13}/>EVIDENCE GATED</Badge><Badge tone="idle">{selected.size} selected</Badge></div></div>
+        <div className="si-grid si-grid-3">
+          <article className="si-metric"><Building2/><span>Dealers</span><strong>{state.stats.dealer_count||state.dealers.length}</strong><small>Rickey book universe</small></article>
+          <article className="si-metric"><CheckCircle2/><span>Complete</span><strong>{state.stats.scanned_count||0}</strong><small>Exhaustive public coverage proven</small></article>
+          <article className="si-metric"><Truck/><span>Verified VINs</span><strong>{state.stats.vin_count||0}</strong><small>From COMPLETE latest snapshots</small></article>
+        </div>
+        <div className="si-control-bar">
+          <label><Search size={15}/><input placeholder="Dealer, ID, city, state, platform" value={query} onChange={e=>setQuery(e.target.value)}/></label>
+          <select value={region} onChange={e=>setRegion(e.target.value)}>{regions.map(r=><option key={r}>{r}</option>)}</select>
+          <button onClick={()=>choose('ALL')}>Select visible</button><button onClick={()=>choose('INCOMPLETE')}>Incomplete</button><button onClick={()=>choose('FAILED')}>Errors</button><button onClick={()=>choose('CLEAR')}>Clear</button>
+        </div>
+        <div className="si-run-strip"><button className="si-primary" disabled={running||!selected.size} onClick={runInventory}><RefreshCw size={16} className={running?'si-spin':''}/>{running?'Scraping selected…':`Scrape inventory (${selected.size})`}</button><button className="si-secondary" onClick={exportDealers}><Download size={15}/>Export dealer status</button><span>{visible.length} visible</span></div>
+        {message&&<div className={`di-message di-message-${message.type}`}>{message.text}</div>}
+        <div className="si-dealer-grid">{visible.map(d=>{const run=d.latest_run,snap=d.latest_snapshot;return <button key={d.dealer_id} className={`si-dealer-card ${selected.has(d.dealer_id)?'selected':''}`} onClick={()=>toggle(d.dealer_id)}>
+          <div className="si-dealer-card-head"><span className="si-check">{selected.has(d.dealer_id)?'✓':''}</span><div><strong>{d.dealer_name}</strong><small>DLR #{d.dealer_id}</small></div><Badge tone={statusTone(run?.status)}>{run?.status||'UNSCANNED'}</Badge></div>
+          <div className="si-dealer-card-body"><span><MapPin size={13}/>{d.city}, {d.state} · {d.region}</span><span><Globe2 size={13}/>{run?.platform||'Platform pending'}</span><span><SquareStack size={13}/>{snap?.vin_count??0} latest observed VINs</span></div>
+          {run?.status==='ERROR'&&<small className="si-card-error"><XCircle size={12}/>{run.error_message}</small>}
+          {run?.status==='INCOMPLETE'&&<small className="si-card-warning"><AlertTriangle size={12}/>Observation captured; exhaustive coverage not proven.</small>}
+        </button>})}</div>
       </section>
 
-      <section className="si-panel si-run-panel">
-        <div className="si-section-head"><div><p className="si-kicker">Reference source adapter</p><h2>NHTSA recalls by vehicle configuration</h2></div><Pill tone="success">TIER 1 · GOVERNMENT</Pill></div>
-        <div className="si-query-grid"><label>Model year<input type="number" value={query.modelYear} onChange={(e) => setQuery({ ...query, modelYear:Number(e.target.value) })} /></label><label>Make<input value={query.make} onChange={(e) => setQuery({ ...query, make:e.target.value })} /></label><label>Model<input value={query.model} onChange={(e) => setQuery({ ...query, model:e.target.value })} /></label><button className="si-primary" onClick={runSource} disabled={running}><RefreshCw size={18} className={running ? 'si-spin' : ''} />{running ? 'Running pipeline…' : 'Run NHTSA source'}</button></div>
-        <p className="si-source-policy">The server-side adapter uses NHTSA's documented make/model/model-year recall endpoint. It does not perform bulk VIN lookups, bypass access controls, or infer that every VIN is affected.</p>
-        <StageRail stageState={stageState} />
-        {error && <div className="si-error"><AlertTriangle /><div><strong>{error.code}</strong><span>{error.message}</span><small>Failed stages remain inspectable instead of being silently dropped.</small></div></div>}
-      </section>
+      <VehicleInventoryPanel dealerState={state} selectedIds={selectedIds}/>
+      <ContactsPanel dealers={state.dealers} selectedIds={selectedIds} onJob={setActiveJobId}/>
 
-      <SourceRegistry source={source} runtimeSource={runtimeSource} />
-
-      <section className="si-grid si-grid-2">
-        <section className="si-panel"><div className="si-section-head"><div><p className="si-kicker">Safety Pulse</p><h2>Latest NHTSA detected state</h2></div><Gauge size={22} /></div>{runResult ? <div className="si-change-card"><div><Pill tone={runResult.change?.material ? 'warning' : 'info'}>{changeType}</Pill><span>{new Date(runResult.evidence.observed_at).toLocaleString()}</span></div><h3>{runResult.change.summary}</h3><div className="si-delta-grid"><div><span>Added</span><strong>{runResult.change.added?.length || 0}</strong></div><div><span>Removed</span><strong>{runResult.change.removed?.length || 0}</strong></div><div><span>Revised</span><strong>{runResult.change.changed?.length || 0}</strong></div></div><p>{runResult.change.material ? 'A material delta exists.' : 'No market-change claim is made from a first baseline or unchanged repeat observation.'}</p></div> : <div className="si-empty"><Radar /><h3>No NHTSA observation yet</h3><p>Run the source to create the first immutable baseline.</p></div>}</section>
-        <section className="si-panel"><div className="si-section-head"><div><p className="si-kicker">Review Queue</p><h2>NHTSA failures and uncertainty</h2></div><AlertTriangle size={22} /></div>{failures.length ? <div className="si-review-list">{failures.map((item) => <div key={item.run_id}><Pill tone="danger">{item.error_code || 'ERROR'}</Pill><span>{item.error_message}</span><small>{new Date(item.started_at).toLocaleString()}</small></div>)}</div> : <div className="si-empty"><CheckCircle2 /><h3>No failed NHTSA stages recorded</h3><p>Source/parser failures remain visible here.</p></div>}</section>
-      </section>
-
-      <section className="si-panel"><div className="si-section-head"><div><p className="si-kicker">Safety Action Queue</p><h2>Transparent recommended action</h2></div><ChevronRight size={22} /></div>{runResult ? <ActionCard action={runResult.action} onEvidence={() => setDrawerOpen(true)} onFeedback={recordFeedback} latestFeedback={feedback} /> : <div className="si-empty"><FileSearch /><h3>No recommendation without evidence</h3><p>The action engine stays empty until a real observation exists.</p></div>}</section>
-
-      <section className="si-panel"><div className="si-section-head"><div><p className="si-kicker">Source classes</p><h2>Registry-ready expansion lanes</h2></div><Pill>{SOURCE_TYPES.length} classes</Pill></div><div className="si-tag-row">{SOURCE_TYPES.map((type) => <Pill key={type}>{type.replaceAll('_', ' ')}</Pill>)}</div><p>NHTSA safety/recall and Rickey's sample dealer book are active. Dealer websites are scanned only on demand in this test build. OEM incentives, news, market metrics, freight, Slack, and Access remain separate until their individual connectors are validated.</p></section>
-
-      <section className="si-guardrail"><ShieldCheck /><div><strong>Isolated persistence boundary</strong><p>Dealer-book records, public-site captures, inventory snapshots, changes, NHTSA evidence, recommendations, failures, and feedback persist in the dedicated Scrape It Supabase/PostgreSQL project. Private dealer contact details remain server-side and are not committed to the public repository.</p></div></section>
+      <section className="si-guardrail"><ShieldCheck/><div><strong>Truth boundary</strong><p>Inventory disappearance is recorded as “no longer observed,” never automatically as a sale or trade. Public contact pages are evidence of what was represented when observed; private CRM records change only after an explicit Match / Update / Add decision.</p></div></section>
     </main>
-
-    {drawerOpen && <><div className="si-backdrop" onClick={() => setDrawerOpen(false)} /><EvidenceDrawer evidence={runResult?.evidence} rawRecord={runResult?.rawRecord} observations={runResult?.observations || []} onClose={() => setDrawerOpen(false)} /></>}
-  </div>;
+    <ScanHUD jobId={activeJobId} onState={s=>{const j=s.jobs?.[0];if(j?.status==='COMPLETE')refresh().catch(()=>{})}}/>
+  </div>
 }
