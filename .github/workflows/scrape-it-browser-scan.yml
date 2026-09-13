@@ -1,0 +1,44 @@
+name: Scrape It Browser Scan
+
+on:
+  workflow_dispatch:
+    inputs:
+      dealer_ids:
+        description: Optional comma-separated dealer IDs. Blank scans every dealer not currently COMPLETE.
+        required: false
+        type: string
+  push:
+    branches: [scrape-it]
+    paths:
+      - '.github/workflows/scrape-it-browser-scan.yml'
+      - 'scripts/dealer-browser-scan.mjs'
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: scrape-it-browser-scan
+  cancel-in-progress: false
+
+jobs:
+  scan:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    env:
+      DEALER_IDS: ${{ inputs.dealer_ids }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: scrape-it
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '24'
+      - name: Install pinned browser client
+        run: npm install --ignore-scripts --no-audit --no-fund
+      - name: Verify browser
+        run: |
+          google-chrome --version
+          node --version
+      - name: Scan dealer book with browser fallback
+        run: node scripts/dealer-browser-scan.mjs
