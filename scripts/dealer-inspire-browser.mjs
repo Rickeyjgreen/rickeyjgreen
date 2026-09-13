@@ -58,7 +58,7 @@ try{
   }else{
     console.log(JSON.stringify({dealer_id:dealerId,status:'INCOMPLETE',platform:'DEALERINSPIRE',vin_count:list.length,reported_total:reported,pages_scanned:evidence.length,reason:`Dealer Inspire strict pagination did not prove exhaustion/reconciliation: observed ${list.length}${reported!=null?` of ${reported}`:''}.`,page_evidence:evidence},null,2))
   }
-}catch(e){console.log(JSON.stringify({dealer_id:dealerId,status:'FALLBACK',platform:'DEALERINSPIRE',error:e.message},null,2))}
+}catch(e){console.log(JSON.stringify({dealer_id:dealerId,status:'INCOMPLETE',platform:'DEALERINSPIRE',error:e.message,reason:'Specialized Dealer Inspire proof failed; generic page-wide fallback is intentionally disabled for this platform.'},null,2))}
 finally{await browser.close().catch(()=>{})}
-out(!complete)
+out(false)
 process.exit(0)
