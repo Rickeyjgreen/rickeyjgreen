@@ -1,1 +1,0 @@
-remove setup-node npm cache because no lockfile; use npm install for browser scan workflow
