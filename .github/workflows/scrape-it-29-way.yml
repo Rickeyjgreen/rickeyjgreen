@@ -6,9 +6,15 @@ on:
       - '.github/workflows/scrape-it-29-way.yml'
       - 'scripts/dealer-browser-scan.mjs'
   workflow_dispatch:
+
 permissions:
   contents: read
   id-token: write
+
+concurrency:
+  group: scrape-it-29-way
+  cancel-in-progress: true
+
 jobs:
   scan:
     strategy:
@@ -17,7 +23,7 @@ jobs:
       matrix:
         dealer: [110,117,140,155,163,164,168,171,188,190,192,199,204,206,218,237,239,263,282,295,304,319,348,358,360,362,370,374,403]
     runs-on: ubuntu-24.04
-    timeout-minutes: 8
+    timeout-minutes: 3
     env:
       DEALER_IDS: ${{ matrix.dealer }}
     steps:
