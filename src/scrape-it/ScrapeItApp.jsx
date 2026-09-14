@@ -4,17 +4,21 @@ import {loadDealerState} from './backendClient.mjs'
 import InventoryBrowser from './InventoryBrowser.jsx'
 import MarketExplorer from './MarketExplorer.jsx'
 
+const hashToScreen=()=>{const h=window.location.hash.replace('#','').toLowerCase();return h==='models'?'MODELS':h==='dealers'?'DEALERS':'PULSE'}
+const screenHash=s=>s==='MODELS'?'#models':s==='DEALERS'?'#dealers':'#pulse'
+
 export default function ScrapeItApp(){
   const [state,setState]=useState({dealers:[],stats:{dealer_count:0,scanned_count:0,vin_count:0}})
   const [error,setError]=useState(null)
   const [refreshing,setRefreshing]=useState(false)
-  const [screen,setScreen]=useState('PULSE')
+  const [screen,setScreen]=useState(()=>hashToScreen())
   const [browseIntent,setBrowseIntent]=useState(null)
 
   async function refresh(){setRefreshing(true);try{setError(null);const next=await loadDealerState();setState(next);return next}catch(e){setError(e.message)}finally{setRefreshing(false)}}
-  useEffect(()=>{refresh()},[])
-  function navigate(intent){const tab=intent?.tab==='DEALERS'?'DEALERS':'MODELS';setBrowseIntent({id:Date.now(),...intent,tab});setScreen(tab);window.scrollTo({top:0,behavior:'smooth'})}
-  function openScreen(next){setBrowseIntent({id:Date.now(),tab:next});setScreen(next);window.scrollTo({top:0,behavior:'smooth'})}
+  useEffect(()=>{refresh();if(!window.location.hash)history.replaceState(null,'','#pulse');const onHash=()=>{setScreen(hashToScreen());setBrowseIntent(null);window.scrollTo({top:0})};window.addEventListener('hashchange',onHash);return()=>window.removeEventListener('hashchange',onHash)},[])
+  function setTopScreen(next,{push=true}={}){const target=screenHash(next);if(push&&window.location.hash!==target)history.pushState(null,'',target);else if(window.location.hash!==target)history.replaceState(null,'',target);setScreen(next)}
+  function navigate(intent){const tab=intent?.tab==='DEALERS'?'DEALERS':'MODELS';setBrowseIntent({id:Date.now(),...intent,tab});setTopScreen(tab);window.scrollTo({top:0,behavior:'smooth'})}
+  function openScreen(next){setBrowseIntent({id:Date.now(),tab:next});setTopScreen(next);window.scrollTo({top:0,behavior:'smooth'})}
 
   return <div className="scrape-it-shell mobile-first-shell catalog-shell">
     <header className="si-header mobile-header catalog-header">
