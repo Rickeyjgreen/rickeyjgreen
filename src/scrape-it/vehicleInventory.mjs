@@ -1,12 +1,14 @@
 export function buildVehicleRows(dealers = []) {
   return dealers.flatMap((dealer) => {
     const snapshot = dealer.latest_snapshot;
-    const vehicles = Array.isArray(snapshot?.vehicles) ? snapshot.vehicles : [];
+    const lifecycleVehicles = Array.isArray(dealer.current_vehicles) ? dealer.current_vehicles : [];
+    const rawVehicles = Array.isArray(snapshot?.vehicles) ? snapshot.vehicles : [];
+    const vehicles = lifecycleVehicles.length ? lifecycleVehicles : rawVehicles;
     const platform = snapshot?.platform || dealer.latest_run?.platform || null;
     const adapter = snapshot?.adapter_name || dealer.latest_run?.adapter_name || '';
     const unsafeDealerInspire = platform === 'DEALERINSPIRE' && /^github-browser-v\d+/i.test(adapter);
-    if (unsafeDealerInspire) return [];
-    const complete = dealer.latest_run?.status === 'COMPLETE' && snapshot?.coverage_status === 'COMPLETE';
+    if (unsafeDealerInspire && !lifecycleVehicles.length) return [];
+    const complete = dealer.current_coverage?.status === 'COMPLETE' || (dealer.latest_run?.status === 'COMPLETE' && snapshot?.coverage_status === 'COMPLETE');
     return vehicles.map((vehicle) => ({
       ...vehicle,
       dealer_id: dealer.dealer_id,
@@ -14,9 +16,10 @@ export function buildVehicleRows(dealers = []) {
       city: dealer.city,
       state: dealer.state,
       region: dealer.region,
-      observed_at: snapshot?.observed_at || null,
+      observed_at: vehicle.observed_at || snapshot?.observed_at || null,
       coverage_status: complete ? 'COMPLETE' : 'OBSERVED',
       complete,
+      inventory_source: lifecycleVehicles.length ? 'ENRICHED_CURRENT_LIFECYCLE' : 'RAW_SNAPSHOT',
     }));
   });
 }
