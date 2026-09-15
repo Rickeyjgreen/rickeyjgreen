@@ -1,11 +1,12 @@
 import React,{useEffect,useState} from 'react'
-import {Activity,Building2,CarFront,Radar,RefreshCw,ShieldCheck} from 'lucide-react'
+import {Activity,Building2,CarFront,Radar,RefreshCw,ScanSearch,ShieldCheck} from 'lucide-react'
 import {loadDealerState} from './backendClient.mjs'
+import DealerPulsePanel from './DealerPulsePanel.jsx'
 import InventoryBrowser from './InventoryBrowser.jsx'
 import MarketExplorer from './MarketExplorer.jsx'
 
-const hashToScreen=()=>{const h=window.location.hash.replace('#','').toLowerCase();return h==='models'?'MODELS':h==='dealers'?'DEALERS':'PULSE'}
-const screenHash=s=>s==='MODELS'?'#models':s==='DEALERS'?'#dealers':'#pulse'
+const hashToScreen=()=>{const h=window.location.hash.replace('#','').toLowerCase();return h==='xray'?'XRAY':h==='models'?'MODELS':h==='dealers'?'DEALERS':'PULSE'}
+const screenHash=s=>s==='XRAY'?'#xray':s==='MODELS'?'#models':s==='DEALERS'?'#dealers':'#pulse'
 
 export default function ScrapeItApp(){
   const [state,setState]=useState({dealers:[],stats:{dealer_count:0,scanned_count:0,vin_count:0}})
@@ -29,6 +30,7 @@ export default function ScrapeItApp(){
     <main className="mobile-main catalog-main">
       {error&&<div className="di-message di-message-error">{error}</div>}
       {screen==='PULSE'&&<MarketExplorer dealerState={state} onNavigate={navigate}/>} 
+      {screen==='XRAY'&&<DealerPulsePanel/>}
       {screen==='MODELS'&&<InventoryBrowser dealerState={state} intent={browseIntent} fixedTab="MODELS"/>}
       {screen==='DEALERS'&&<InventoryBrowser dealerState={state} intent={browseIntent} fixedTab="DEALERS"/>}
       <section className="mb-truth catalog-truth"><ShieldCheck size={15}/><p><strong>Evidence rule:</strong> “removed” means no longer observed on a trusted public scan. It is not automatically a sale or trade.</p></section>
@@ -36,6 +38,7 @@ export default function ScrapeItApp(){
 
     <nav className="mb-bottom-nav catalog-nav" aria-label="Primary navigation">
       <button className={screen==='PULSE'?'active':''} onClick={()=>openScreen('PULSE')}><Activity size={19}/><span>Pulse</span></button>
+      <button className={screen==='XRAY'?'active':''} onClick={()=>openScreen('XRAY')}><ScanSearch size={19}/><span>X-Ray</span></button>
       <button className={screen==='MODELS'?'active':''} onClick={()=>openScreen('MODELS')}><CarFront size={19}/><span>Models</span></button>
       <button className={screen==='DEALERS'?'active':''} onClick={()=>openScreen('DEALERS')}><Building2 size={19}/><span>Dealers</span></button>
     </nav>
