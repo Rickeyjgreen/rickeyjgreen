@@ -6,6 +6,7 @@ import './dealer-intel.css'
 import './control-center.css'
 import './mobile-browser.css'
 import './responsive-fixes.css'
+import './xray-nav.css'
 
 class AppBoundary extends React.Component{
   constructor(props){super(props);this.state={error:null}}
