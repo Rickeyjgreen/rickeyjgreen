@@ -1,0 +1,4 @@
+/* Dealer Pulse X-Ray navigation extension */
+.catalog-nav{grid-template-columns:repeat(4,1fr)!important;width:min(500px,calc(100% - 24px))!important}
+@media(max-width:650px){.catalog-nav{width:min(390px,calc(100% - 18px))!important}.catalog-nav button{gap:5px!important;font-size:10px!important}}
+@media(min-width:900px){.catalog-nav{width:92px!important}}
