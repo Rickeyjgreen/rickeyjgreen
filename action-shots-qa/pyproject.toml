@@ -1,0 +1,38 @@
+[build-system]
+requires = ["setuptools>=69", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "actionshots-qa"
+version = "0.1.0"
+description = "Local, resumable tagged-shoot portrait QA and safe JPEG rating writer"
+requires-python = ">=3.11,<3.13"
+dependencies = [
+  "fastapi==0.115.6",
+  "uvicorn[standard]==0.34.0",
+  "numpy==2.1.3",
+  "opencv-contrib-python-headless==4.10.0.84",
+  "onnxruntime-gpu==1.20.2",
+  "Pillow==11.1.0",
+  "openpyxl==3.1.5",
+  "python-multipart==0.0.20",
+]
+
+[project.optional-dependencies]
+dev = ["pytest==8.3.4", "httpx==0.28.1"]
+
+[project.scripts]
+actionshots-qa = "actionshots_qa.cli:main"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+actionshots_qa = ["static/*", "defaults.json"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"

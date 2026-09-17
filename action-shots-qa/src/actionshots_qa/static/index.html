@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Action Shots Photo QA</title>
+  <style>
+    :root{font-family:Inter,Segoe UI,sans-serif;color:#eef2ff;background:#0b1020}body{max-width:1180px;margin:auto;padding:24px}
+    h1{margin:0 0 6px}.muted{color:#9aa7c7}.panel{background:#151d33;border:1px solid #2a3658;border-radius:14px;padding:18px;margin:16px 0}
+    input{width:100%;box-sizing:border-box;background:#0c1326;color:white;border:1px solid #3a486d;border-radius:8px;padding:11px;margin:6px 0 12px}
+    button{background:#45d483;color:#07140c;border:0;border-radius:8px;padding:10px 15px;font-weight:700;cursor:pointer;margin:4px}
+    button.secondary{background:#33405f;color:white}.danger{background:#ffbd59;color:#211400}.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:12px}
+    .card{background:#0d1428;border:2px solid transparent;border-radius:10px;padding:8px}.card img{width:100%;aspect-ratio:4/3;object-fit:contain;background:#050810;border-radius:7px}
+    .card.selected{border-color:#45d483}.pill{display:inline-block;padding:3px 8px;border-radius:20px;background:#263454;margin-right:6px}.hidden{display:none}
+    pre{white-space:pre-wrap;color:#b8c5e6}.toolbar{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+  </style>
+</head>
+<body>
+  <h1>Action Shots Photo QA</h1><div class="muted">Local processing. Photos and face data never leave this workstation.</div>
+  <section class="panel">
+    <h2>Start tagged shoot</h2>
+    <label>Shoot folder</label><input id="shoot" placeholder="D:\Photo Jobs\Colts">
+    <label>GotPhoto CSV/XLSX export</label><input id="roster" placeholder="D:\Photo Jobs\Colts\roster.xlsx">
+    <label><input id="cpu" type="checkbox" style="width:auto"> Explicitly allow CPU fallback if CUDA fails (slower)</label><br>
+    <button onclick="startJob()">Analyze shoot</button><button class="secondary" onclick="diagnose()">Diagnose GPU</button>
+    <pre id="status"></pre>
+  </section>
+  <section class="panel"><div class="toolbar"><h2 style="margin-right:auto">Jobs</h2><button class="secondary" onclick="loadJobs()">Refresh</button></div><div id="jobs"></div></section>
+  <section id="reviewPanel" class="panel hidden">
+    <div class="toolbar"><h2 style="margin-right:auto">Exception review</h2><span id="counter" class="pill"></span></div>
+    <h3 id="reason"></h3><div id="code" class="muted"></div><div id="candidates" class="grid"></div>
+    <div class="toolbar"><button onclick="winner()">Choose winner (1–4)</button><button class="secondary" onclick="group()">Mark group (G)</button><button class="secondary" onclick="splitIdentity()">Split selected person (X)</button><button class="secondary" onclick="mergeIdentity()">Merge identity (M)</button><button class="secondary" onclick="resolve('skip')">Skip/accept unstarred (S)</button><button class="secondary" onclick="previous()">Previous (←)</button><button onclick="next()">Next (→)</button></div>
+    <div class="muted">Click a candidate or press 1–4. Decisions save immediately. Split moves the selected portrait into a new identity; merge asks for the target cluster number shown on another exception.</div>
+  </section>
+<script>
+let activeJob=null, exceptions=[], index=0, selected=null;
+async function api(url,options={}){let r=await fetch(url,{headers:{'Content-Type':'application/json'},...options});let body=await r.json().catch(()=>({detail:r.statusText}));if(!r.ok)throw Error(body.detail||JSON.stringify(body));return body}
+async function diagnose(){try{document.querySelector('#status').textContent=JSON.stringify(await api('/api/hardware?allow_cpu_fallback='+document.querySelector('#cpu').checked),null,2)}catch(e){document.querySelector('#status').textContent=e.message}}
+async function startJob(){try{let body=await api('/api/jobs',{method:'POST',body:JSON.stringify({shoot_folder:shoot.value,roster_file:roster.value,allow_cpu_fallback:cpu.checked})});activeJob=body.job_id;status.textContent='Analysis started: '+activeJob;setTimeout(loadJobs,1200)}catch(e){status.textContent=e.message}}
+async function loadJobs(){let data=await api('/api/jobs');jobs.innerHTML=data.map(j=>`<div class="panel"><b>${j.id}</b> <span class="pill">${j.status}</span><br><span class="muted">${j.source_path}</span><br><button class="secondary" onclick="review('${j.id}')">Review</button><button class="danger" onclick="finalize('${j.id}')">Verify & write ratings</button>${j.error?'<pre>'+j.error+'</pre>':''}</div>`).join('');if(data.some(j=>['ANALYZING','WRITING'].includes(j.status)))setTimeout(loadJobs,2500)}
+async function review(id){activeJob=id;exceptions=await api(`/api/jobs/${id}/exceptions`);index=0;reviewPanel.classList.remove('hidden');render()}
+function render(){if(!exceptions.length){reason.textContent='No open exceptions';code.textContent='Ready to verify and write ratings.';candidates.innerHTML='';counter.textContent='0 remaining';return}let e=exceptions[index];selected=e.candidates[0]?.id||null;reason.textContent=e.reason.replaceAll('_',' ');code.textContent=`Code: ${e.copyright_code||'missing'} · Cluster: ${e.cluster_id||'n/a'}`;counter.textContent=`${index+1} / ${exceptions.length}`;candidates.innerHTML=e.candidates.map((c,i)=>`<div class="card ${c.id===selected?'selected':''}" onclick="select(${c.id})"><img src="/api/images/${c.id}/proxy"><b>${i+1}. ${c.relative_path}</b><div class="muted">score ${(c.portrait_score??0).toFixed(3)} · faces ${c.face_count??0}</div></div>`).join('')}
+function select(id){selected=id;render()}
+async function resolve(action,extra={}){if(!exceptions.length)return;let e=exceptions[index];await api(`/api/exceptions/${e.id}/resolve`,{method:'POST',body:JSON.stringify({action,image_id:selected,...extra})});await review(activeJob)}
+function winner(){resolve('winner')} function group(){resolve('group')} function splitIdentity(){resolve('split')} function mergeIdentity(){let target=Number(prompt('Target cluster ID to merge into:'));if(target)resolve('merge',{target_cluster_id:target})} function next(){if(index<exceptions.length-1){index++;render()}} function previous(){if(index>0){index--;render()}}
+async function finalize(id){if(!confirm('Write verified ratings to ORIGINAL JPEG metadata now? Every write is backed up, checked, and rolled back on failure.'))return;try{status.textContent=JSON.stringify(await api(`/api/jobs/${id}/finalize`,{method:'POST'}),null,2);loadJobs()}catch(e){status.textContent=e.message}}
+document.addEventListener('keydown',e=>{if(e.key>='1'&&e.key<='4'){let c=exceptions[index]?.candidates[Number(e.key)-1];if(c){selected=c.id;render()}}else if(e.key.toLowerCase()==='g')group();else if(e.key.toLowerCase()==='s')resolve('skip');else if(e.key.toLowerCase()==='x')splitIdentity();else if(e.key.toLowerCase()==='m')mergeIdentity();else if(e.key==='ArrowRight')next();else if(e.key==='ArrowLeft')previous();else if(e.key==='Enter')winner()});loadJobs();
+</script></body></html>

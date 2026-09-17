@@ -1,0 +1,16 @@
+.venv/
+.verify-venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.actionshots-qa/
+models/*.onnx
+models/exiftool*
+*.sqlite3
+*.db
+*.jpg
+*.jpeg
+*.csv
+*.xlsx
+dist/
+build/

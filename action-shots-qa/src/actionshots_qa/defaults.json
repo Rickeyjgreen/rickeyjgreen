@@ -1,0 +1,26 @@
+{
+  "proxy_max_edge": 1024,
+  "decode_workers": 6,
+  "decode_queue_size": 16,
+  "face_score_threshold": 0.82,
+  "nms_threshold": 0.30,
+  "top_k": 5000,
+  "cluster_cosine_threshold": 0.48,
+  "group_min_face_confidence": 0.88,
+  "group_min_combined_face_area": 0.035,
+  "winner_min_score": 0.60,
+  "winner_min_margin": 0.075,
+  "winner_min_detection_confidence": 0.88,
+  "max_review_candidates": 4,
+  "weights": {
+    "sharpness": 0.24,
+    "exposure": 0.13,
+    "face_size": 0.13,
+    "pose": 0.16,
+    "expression": 0.10,
+    "eye": 0.08,
+    "framing": 0.10,
+    "detector": 0.06
+  }
+}
+
