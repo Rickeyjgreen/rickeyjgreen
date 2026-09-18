@@ -59,14 +59,15 @@ def analyze_job(db: Database, job_id: str, model_paths: ModelPaths, hardware: Ha
     roster = load_roster_codes(Path(job["roster_path"]))
     work = root / ".actionshots-qa" / job_id
     cache = work / "proxies"
-    engine = FaceEngine(model_paths, hardware, settings.face_score_threshold,
-                        settings.nms_threshold, settings.top_k)
     db.set_job_status(job_id, "ANALYZING")
     db.audit(job_id, "HARDWARE", True, hardware.as_dict())
     started = time.perf_counter()
     try:
         existing = {r["relative_path"]: r for r in db.query("SELECT * FROM images WHERE job_id=?", (job_id,))}
         paths = image_files(root)
+        db.audit(job_id, "IMAGE_DISCOVERY", True, {"total_images": len(paths)})
+        engine = FaceEngine(model_paths, hardware, settings.face_score_threshold,
+                            settings.nms_threshold, settings.top_k)
         todo = [p for p in paths if str(p.relative_to(root)).replace("\\", "/") not in existing
                 or existing[str(p.relative_to(root)).replace("\\", "/")]["analysis_status"] != "DONE"]
         for prepared in _bounded_prepared(todo, root, cache, settings):

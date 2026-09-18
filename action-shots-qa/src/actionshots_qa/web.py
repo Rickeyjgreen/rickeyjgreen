@@ -45,7 +45,11 @@ def create_app(db: Database, settings: Settings, model_paths: ModelPaths, exifto
 
     @app.get("/api/jobs")
     def jobs():
-        return db.query("SELECT * FROM jobs ORDER BY created_at DESC")
+        return db.query("""SELECT j.*,
+            (SELECT count(*) FROM images i WHERE i.job_id=j.id AND i.analysis_status='DONE') AS processed_images,
+            (SELECT json_extract(a.details_json,'$.total_images') FROM audit_events a
+             WHERE a.job_id=j.id AND a.event='IMAGE_DISCOVERY' ORDER BY a.id DESC LIMIT 1) AS total_images
+            FROM jobs j ORDER BY j.created_at DESC""")
 
     @app.post("/api/jobs")
     def create_job(request: JobCreate, background: BackgroundTasks):
@@ -65,6 +69,7 @@ def create_app(db: Database, settings: Settings, model_paths: ModelPaths, exifto
         except Exception as exc:
             raise HTTPException(409, f"GPU/model startup check failed: {exc}")
         job_id = db.create_job(source, roster, settings.as_json())
+        db.set_job_status(job_id, "ANALYZING")
         background.add_task(analyze_job, db, job_id, model_paths, report, settings)
         return {"job_id": job_id, "status": "ANALYZING", "hardware": report.as_dict()}
 

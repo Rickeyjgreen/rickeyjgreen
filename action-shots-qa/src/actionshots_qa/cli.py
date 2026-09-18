@@ -9,7 +9,7 @@ import uvicorn
 from .config import load_settings
 from .db import Database
 from .hardware import diagnose, report_json
-from .models import ModelPaths
+from .models import FaceEngine, ModelPaths
 from .web import create_app, open_browser_later
 
 
@@ -30,9 +30,20 @@ def main() -> None:
     serve.add_argument("--config", type=Path)
     diagnose_parser = sub.add_parser("diagnose", help="Verify NVIDIA CUDA and CPU fallback")
     diagnose_parser.add_argument("--allow-cpu-fallback", action="store_true")
+    diagnose_parser.add_argument("--root", type=Path, default=Path.cwd())
     args = parser.parse_args()
     if args.command == "diagnose":
-        print(report_json(diagnose(require_cuda=True, allow_cpu_fallback=args.allow_cpu_fallback)))
+        try:
+            report = diagnose(require_cuda=True, allow_cpu_fallback=args.allow_cpu_fallback)
+            model_paths, _ = _paths(args.root.resolve())
+            settings = load_settings()
+            FaceEngine(model_paths, report, settings.face_score_threshold,
+                       settings.nms_threshold, settings.top_k)
+            print(report_json(report))
+            print("MODEL_STARTUP_CHECK=PASS")
+        except Exception as exc:
+            print(f"MODEL_STARTUP_CHECK=FAIL\n{exc}")
+            raise SystemExit(1)
         return
     root = args.root.resolve()
     model_paths, exiftool = _paths(root)
@@ -45,4 +56,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-

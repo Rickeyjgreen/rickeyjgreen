@@ -26,6 +26,8 @@ PowerShell -ExecutionPolicy Bypass -File .\scripts\run_windows.ps1
 
 The app opens at `http://127.0.0.1:8765`. Paste the shoot folder and matching GotPhoto CSV/XLSX paths, then click **Analyze shoot**.
 
+If setup ever reports a failed download, do not launch the server. Pull the latest branch and rerun `setup_windows.ps1`; the installer verifies SHA-256 checksums and the run script now blocks incomplete installations.
+
 ## Operator flow
 
 1. Diagnose confirms the NVIDIA GPU, dedicated VRAM, `CUDAExecutionProvider`, and CPU fallback availability.
