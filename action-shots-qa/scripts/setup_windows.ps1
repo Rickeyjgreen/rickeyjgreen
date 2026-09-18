@@ -30,7 +30,13 @@ function Get-VerifiedFile {
   foreach ($url in $Urls) {
     try {
       Write-Host "Downloading $Label..." -ForegroundColor Cyan
-      Invoke-WebRequest -Uri $url -OutFile $partial -MaximumRedirection 10
+      if (Get-Command curl.exe -ErrorAction SilentlyContinue) {
+        & curl.exe --fail --location --silent --show-error --retry 2 `
+          --connect-timeout 20 --max-time 300 --output $partial $url
+        if ($LASTEXITCODE -ne 0) { throw "curl.exe exited with code $LASTEXITCODE" }
+      } else {
+        Invoke-WebRequest -UseBasicParsing -Uri $url -OutFile $partial -MaximumRedirection 10
+      }
       $actualHash = (Get-FileHash -Algorithm SHA256 $partial).Hash.ToLowerInvariant()
       if ($actualHash -ne $Sha256) {
         throw "$Label checksum mismatch. Expected $Sha256; received $actualHash"
@@ -65,7 +71,10 @@ Get-VerifiedFile -Label "SFace identity model" `
 Get-VerifiedFile -Label "ExifTool 13.59" `
   -Path "models\exiftool.zip" `
   -Urls @(
+    "https://exiftool.org/exiftool-13.59_64.zip",
     "https://downloads.sourceforge.net/project/exiftool/exiftool-13.59_64.zip",
+    "https://download.sourceforge.net/project/exiftool/exiftool-13.59_64.zip",
+    "https://downloads.sourceforge.net/exiftool/exiftool-13.59_64.zip",
     "https://sourceforge.net/projects/exiftool/files/exiftool-13.59_64.zip/download"
   ) `
   -Sha256 "44b512b25af500724ba579d0a53c8fc5851628b692dd5e5d94ae4a15c2cba9ec"
