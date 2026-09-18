@@ -143,6 +143,9 @@ def face_metrics(image: np.ndarray, face: np.ndarray) -> dict[str, float]:
     }
 
 
-def metric_json(metrics: dict[str, float]) -> str:
-    return json.dumps({k: round(float(v), 6) for k, v in metrics.items()}, sort_keys=True)
-
+def metric_json(metrics: dict[str, float | str]) -> str:
+    normalized = {
+        key: round(float(value), 6) if isinstance(value, (int, float, np.floating)) else value
+        for key, value in metrics.items()
+    }
+    return json.dumps(normalized, sort_keys=True)

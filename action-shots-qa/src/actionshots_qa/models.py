@@ -14,9 +14,10 @@ from .hardware import HardwareReport, provider_order
 class ModelPaths:
     yunet: Path
     sface: Path
+    expression: Path
 
     def validate(self) -> None:
-        missing = [str(p) for p in (self.yunet, self.sface) if not Path(p).is_file()]
+        missing = [str(p) for p in (self.yunet, self.sface, self.expression) if not Path(p).is_file()]
         if missing:
             raise FileNotFoundError("Missing model(s): " + ", ".join(missing) + ". Run setup_windows.ps1.")
 
@@ -36,6 +37,8 @@ class FaceEngine:
             str(paths.yunet), "", (320, 320), score_threshold, nms_threshold, top_k
         )
         self._detector_lock = threading.Lock()
+        self._expression_lock = threading.Lock()
+        self._expression_model = cv2.dnn.readNet(str(paths.expression))
         self._cpu_recognizer = None
         self._ort_session = None
         if hardware.cuda_active:
@@ -81,3 +84,30 @@ class FaceEngine:
             output = self._cpu_recognizer.feature(aligned).reshape(-1)
         norm = np.linalg.norm(output)
         return (output / norm if norm else output).astype(np.float32)
+
+    def expression(self, bgr: np.ndarray, face: np.ndarray) -> tuple[str, float, float]:
+        """Return label, label confidence, and a portrait-friendly expression score."""
+        aligned = self._aligned_crop(bgr, face)
+        rgb = cv2.cvtColor(aligned, cv2.COLOR_BGR2RGB).astype(np.float32) / 255.0
+        rgb = (rgb - 0.5) / 0.5
+        blob = cv2.dnn.blobFromImage(rgb)
+        with self._expression_lock:
+            self._expression_model.setInput(blob, "data")
+            raw = self._expression_model.forward(["label"])[0]
+        logits = np.asarray(raw, dtype=np.float32).reshape(-1)
+        shifted = logits - float(logits.max())
+        probabilities = np.exp(shifted)
+        probabilities /= max(float(probabilities.sum()), 1e-8)
+        labels = ("angry", "disgust", "fearful", "happy", "neutral", "sad", "surprised")
+        index = int(np.argmax(probabilities))
+        confidence = float(probabilities[index])
+        label = labels[index]
+        if label == "happy":
+            portrait_score = 0.80 + 0.20 * confidence
+        elif label == "neutral":
+            portrait_score = 0.45 + 0.10 * confidence
+        elif label == "surprised":
+            portrait_score = 0.30
+        else:
+            portrait_score = 0.10
+        return label, confidence, portrait_score

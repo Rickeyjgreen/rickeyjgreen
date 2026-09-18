@@ -17,7 +17,8 @@ def _paths(root: Path) -> tuple[ModelPaths, Path]:
     models = root / "models"
     exiftool = models / ("exiftool.exe" if os.name == "nt" else "exiftool")
     return ModelPaths(models / "face_detection_yunet_2023mar.onnx",
-                      models / "face_recognition_sface_2021dec.onnx"), exiftool
+                      models / "face_recognition_sface_2021dec.onnx",
+                      models / "facial_expression_recognition_mobilefacenet_2022july.onnx"), exiftool
 
 
 def main() -> None:

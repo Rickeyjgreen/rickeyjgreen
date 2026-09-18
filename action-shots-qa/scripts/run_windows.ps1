@@ -4,6 +4,7 @@ if (-not (Test-Path ".venv\Scripts\actionshots-qa.exe")) { throw "Run scripts\se
 $required = @(
   "models\face_detection_yunet_2023mar.onnx",
   "models\face_recognition_sface_2021dec.onnx",
+  "models\facial_expression_recognition_mobilefacenet_2022july.onnx",
   "models\exiftool.exe"
 )
 $missing = @($required | Where-Object { -not (Test-Path $_) })

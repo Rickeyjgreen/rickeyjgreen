@@ -45,6 +45,7 @@ def _score(metrics: dict[str, float], base: dict[str, float], detector: float,
         "sharpness": metrics["sharpness"], "exposure": base["exposure"],
         "face_size": metrics["face_size"], "pose": metrics["pose"],
         "expression": metrics["expression"], "eye": metrics["eye"],
+        "expression_ai": metrics.get("expression_ai", 0.0),
         "framing": metrics["framing"], "detector": detector,
     }
     return sum(features[k] * float(weights.get(k, 0)) for k in features)
@@ -100,6 +101,13 @@ def analyze_job(db: Database, job_id: str, model_paths: ModelPaths, hardware: Ha
                 for face in faces:
                     embedding = engine.embed(prepared.proxy_bgr, face)
                     metrics = face_metrics(prepared.proxy_bgr, face)
+                    expression_label, expression_confidence, expression_ai = engine.expression(
+                        prepared.proxy_bgr, face)
+                    metrics.update({
+                        "expression_label": expression_label,
+                        "expression_confidence": expression_confidence,
+                        "expression_ai": expression_ai,
+                    })
                     portrait = _score(metrics, prepared.base_metrics, float(face[14]), settings.weights)
                     if portrait >= best_score:
                         best_score, best_metrics = portrait, {**prepared.base_metrics, **metrics}
@@ -121,8 +129,6 @@ def analyze_job(db: Database, job_id: str, model_paths: ModelPaths, hardware: Ha
                      group_score, best_score, metric_json(best_metrics)),
                 )
                 conn.execute("UPDATE images SET analysis_status='DONE' WHERE id=?", (image_id,))
-            if code_state != "MATCHED":
-                _add_exception(db, job_id, prepared.copyright_code, None, code_state, [image_id])
         _cluster_and_decide(db, job_id, settings)
         open_count = db.one("SELECT count(*) AS n FROM exceptions WHERE job_id=? AND status='OPEN'", (job_id,))["n"]
         status = "NEEDS_REVIEW" if open_count else "READY_TO_WRITE"
@@ -131,6 +137,7 @@ def analyze_job(db: Database, job_id: str, model_paths: ModelPaths, hardware: Ha
             "seconds": round(time.perf_counter() - started, 3), "images": len(paths),
             "roster_codes": len(roster.codes), "open_exceptions": open_count,
         })
+        write_report(db, job_id, "analysis-report.json")
     except Exception as exc:
         db.set_job_status(job_id, "FAILED", str(exc))
         db.audit(job_id, "ANALYSIS_FAILED", False, {"error": str(exc)})
@@ -139,9 +146,11 @@ def analyze_job(db: Database, job_id: str, model_paths: ModelPaths, hardware: Ha
 
 def _add_exception(db: Database, job_id: str, code: str | None, cluster_id: int | None,
                    reason: str, candidates: list[int]) -> None:
+    encoded = json.dumps(candidates)
     existing = db.one(
-        "SELECT id FROM exceptions WHERE job_id=? AND reason=? AND ifnull(cluster_id,0)=ifnull(?,0) AND status='OPEN'",
-        (job_id, reason, cluster_id),
+        """SELECT id FROM exceptions WHERE job_id=? AND reason=?
+        AND ifnull(cluster_id,0)=ifnull(?,0) AND candidate_images_json=? AND status='OPEN'""",
+        (job_id, reason, cluster_id, encoded),
     )
     if existing:
         return
@@ -149,7 +158,7 @@ def _add_exception(db: Database, job_id: str, code: str | None, cluster_id: int 
     db.execute(
         """INSERT INTO exceptions(job_id,copyright_code,cluster_id,reason,candidate_images_json,
         status,created_at,updated_at) VALUES(?,?,?,?,?,'OPEN',?,?)""",
-        (job_id, code, cluster_id, reason, json.dumps(candidates), stamp, stamp),
+        (job_id, code, cluster_id, reason, encoded, stamp, stamp),
     )
 
 
@@ -163,9 +172,9 @@ def _cluster_and_decide(db: Database, job_id: str, settings: Settings) -> None:
     human_count = db.one("SELECT count(*) n FROM decisions WHERE job_id=? AND source='HUMAN'", (job_id,))["n"]
     if human_count:
         raise RuntimeError("This job already has human review decisions and cannot be reclustered automatically")
-    db.execute("DELETE FROM exceptions WHERE job_id=? AND status='OPEN'", (job_id,))
-    db.execute("UPDATE exceptions SET cluster_id=NULL WHERE job_id=?", (job_id,))
+    db.execute("DELETE FROM exceptions WHERE job_id=?", (job_id,))
     db.execute("DELETE FROM decisions WHERE job_id=? AND source IN ('AUTO','RULE')", (job_id,))
+    db.execute("UPDATE images SET proposed_rating=0 WHERE job_id=?", (job_id,))
     db.execute("UPDATE faces SET identity_cluster_id=NULL WHERE image_id IN (SELECT id FROM images WHERE job_id=?)",
                (job_id,))
     db.execute("DELETE FROM identity_clusters WHERE job_id=?", (job_id,))
@@ -201,45 +210,77 @@ def _cluster_and_decide(db: Database, job_id: str, settings: Settings) -> None:
                 cluster_id = cursor.lastrowid
                 conn.executemany("UPDATE faces SET identity_cluster_id=? WHERE id=?",
                                  [(cluster_id, face_id) for face_id in cluster["face_ids"]])
-    # Rule: confidently detected multi-face frames are buddy/group frames.
+    # Rule: every frame with two or more confidently detected faces is a
+    # buddy/group frame. The detector has already rejected faces below its
+    # configured confidence threshold, so face area must not veto this rule.
     group_rows = db.query(
-        """SELECT i.id,i.copyright_code,m.face_count,m.group_score area_ratio,
+        """SELECT i.id,i.copyright_code,m.face_count,
         (SELECT min(confidence) FROM faces WHERE image_id=i.id) min_conf
         FROM images i JOIN image_metrics m ON m.image_id=i.id WHERE i.job_id=? AND m.face_count>=2""", (job_id,))
     for row in group_rows:
-        if (row["min_conf"] or 0) >= settings.group_min_face_confidence and (row["area_ratio"] or 0) >= settings.group_min_combined_face_area:
+        if (row["min_conf"] or 0) >= settings.group_min_face_confidence:
             db.execute("UPDATE images SET proposed_rating=3 WHERE id=?", (row["id"],))
             db.execute("INSERT INTO decisions(job_id,image_id,decision,rating,confidence,reason,source,created_at) VALUES(?,?,?,?,?,?,?,?)",
                        (job_id, row["id"], "GROUP", 3, float(row["min_conf"]), "multiple confident faces", "RULE", now()))
         else:
             _add_exception(db, job_id, row["copyright_code"], None, "UNCERTAIN_GROUP", [row["id"]])
-    # One winner per identity cluster, using only single-face portrait frames.
+
+    # One winner per identity that has a single-face portrait. Faces that only
+    # occur in buddy images are companions, not missing portrait assignments.
+    portrait_codes = {
+        row["copyright_code"] for row in db.query(
+            """SELECT DISTINCT i.copyright_code FROM images i
+            JOIN image_metrics m ON m.image_id=i.id
+            WHERE i.job_id=? AND m.face_count=1 AND i.copyright_code IS NOT NULL""",
+            (job_id,),
+        )
+    }
+    missing_portraits: dict[str, set[int]] = {}
     for cluster in db.query("SELECT * FROM identity_clusters WHERE job_id=?", (job_id,)):
         candidates = db.query(
-            """SELECT DISTINCT i.id,i.copyright_code,m.portrait_score,f.confidence
+            """SELECT DISTINCT i.id,i.copyright_code,m.portrait_score,m.details_json,f.confidence
             FROM faces f JOIN images i ON i.id=f.image_id JOIN image_metrics m ON m.image_id=i.id
             WHERE f.identity_cluster_id=? AND m.face_count=1 ORDER BY m.portrait_score DESC""",
             (cluster["id"],))
         if not candidates:
+            db.execute("UPDATE identity_clusters SET subject_type='GROUP_ONLY' WHERE id=?", (cluster["id"],))
+            if cluster["copyright_code"] in portrait_codes:
+                continue
             all_images = db.query("SELECT DISTINCT image_id AS id FROM faces WHERE identity_cluster_id=?", (cluster["id"],))
-            _add_exception(db, job_id, cluster["copyright_code"], cluster["id"],
-                           "NO_PORTRAIT_CANDIDATE", [r["id"] for r in all_images])
+            missing_portraits.setdefault(cluster["copyright_code"], set()).update(r["id"] for r in all_images)
             continue
+        db.execute("UPDATE identity_clusters SET subject_type='PORTRAIT' WHERE id=?", (cluster["id"],))
         top = candidates[0]
         runner = candidates[1]["portrait_score"] if len(candidates) > 1 else 0.0
         margin = float(top["portrait_score"] or 0) - float(runner or 0)
-        confidence = min(1.0, 0.55 * float(top["portrait_score"] or 0) + 0.45 * min(1.0, margin / 0.2))
+        details = json.loads(top["details_json"] or "{}")
+        happy_score = details.get("expression_ai")
+        confidence = min(1.0, 0.55 * float(top["portrait_score"] or 0)
+                         + 0.25 * float(top["confidence"] or 0)
+                         + 0.20 * float(happy_score if happy_score is not None else 0.75))
         safe = (float(top["portrait_score"] or 0) >= settings.winner_min_score
                 and float(top["confidence"] or 0) >= settings.winner_min_detection_confidence
-                and (margin >= settings.winner_min_margin or len(candidates) == 1))
+                and (happy_score is None or float(happy_score) >= settings.winner_min_happy_score))
         if safe:
             db.execute("UPDATE images SET proposed_rating=5 WHERE id=?", (top["id"],))
             db.execute("INSERT INTO decisions(job_id,image_id,cluster_id,decision,rating,confidence,reason,source,created_at) VALUES(?,?,?,?,?,?,?,?,?)",
                        (job_id, top["id"], cluster["id"], "WINNER", 5, confidence,
-                        f"score={top['portrait_score']:.3f};margin={margin:.3f}", "AUTO", now()))
+                        f"score={top['portrait_score']:.3f};margin={margin:.3f};expression={details.get('expression_label', 'legacy')}",
+                        "AUTO", now()))
         else:
-            _add_exception(db, job_id, cluster["copyright_code"], cluster["id"], "CLOSE_PORTRAIT_RACE",
+            reason = "EXPRESSION_REVIEW" if happy_score is not None and float(happy_score) < settings.winner_min_happy_score else "LOW_QUALITY_PORTRAIT"
+            _add_exception(db, job_id, cluster["copyright_code"], cluster["id"], reason,
                            [r["id"] for r in candidates[:settings.max_review_candidates]])
+    for code, image_ids in missing_portraits.items():
+        _add_exception(db, job_id, code, None, "NO_PORTRAIT_CANDIDATE", sorted(image_ids))
+
+    roster = load_roster_codes(Path(db.one("SELECT roster_path FROM jobs WHERE id=?", (job_id,))["roster_path"]))
+    code_rows = db.query("SELECT id,copyright_code FROM images WHERE job_id=?", (job_id,))
+    for row in code_rows:
+        if not row["copyright_code"]:
+            _add_exception(db, job_id, None, None, "MISSING_CODE", [row["id"]])
+        elif row["copyright_code"] not in roster.codes:
+            _add_exception(db, job_id, row["copyright_code"], None, "UNMATCHED_CODE", [row["id"]])
     no_faces = db.query("""SELECT i.id,i.copyright_code FROM images i JOIN image_metrics m ON m.image_id=i.id
                             WHERE i.job_id=? AND m.face_count=0""", (job_id,))
     for row in no_faces:
@@ -259,11 +300,9 @@ def finalize_job(db: Database, job_id: str, exiftool: Path) -> dict:
             db.audit(job_id, "RATING_WRITE", True, result.__dict__, row["id"])
             db.execute("UPDATE images SET current_rating=? WHERE id=?", (result.rating, row["id"]))
             written += 1
-        report = build_report(db, job_id)
-        report_path = Path(db.one("SELECT source_path FROM jobs WHERE id=?", (job_id,))["source_path"]) / ".actionshots-qa" / job_id / "final-report.json"
-        report_path.parent.mkdir(parents=True, exist_ok=True)
-        report_path.write_text(json.dumps(report, indent=2), encoding="utf-8")
         db.set_job_status(job_id, "COMPLETE")
+        report_path = write_report(db, job_id, "final-report.json")
+        report = build_report(db, job_id)
         return {**report, "report_path": str(report_path), "written": written}
     except Exception as exc:
         db.set_job_status(job_id, "WRITE_FAILED", str(exc))
@@ -274,6 +313,16 @@ def finalize_job(db: Database, job_id: str, exiftool: Path) -> dict:
 def build_report(db: Database, job_id: str) -> dict:
     def count(sql: str) -> int:
         return int(db.one(sql, (job_id,))["n"])
+    exception_breakdown = {
+        row["reason"]: row["n"] for row in db.query(
+            """SELECT reason,count(*) n FROM exceptions
+            WHERE job_id=? AND status='OPEN' GROUP BY reason ORDER BY reason""", (job_id,))
+    }
+    decision_breakdown = {
+        f"{row['source']}:{row['decision']}": row["n"] for row in db.query(
+            """SELECT source,decision,count(*) n FROM decisions
+            WHERE job_id=? GROUP BY source,decision ORDER BY source,decision""", (job_id,))
+    }
     return {
         "job": db.one("SELECT id,status,source_path,roster_path,pipeline_version,created_at,updated_at,error FROM jobs WHERE id=?", (job_id,)),
         "images": count("SELECT count(*) n FROM images WHERE job_id=?"),
@@ -282,5 +331,16 @@ def build_report(db: Database, job_id: str) -> dict:
         "five_star": count("SELECT count(*) n FROM images WHERE job_id=? AND proposed_rating=5"),
         "three_star_groups": count("SELECT count(*) n FROM images WHERE job_id=? AND proposed_rating=3"),
         "open_exceptions": count("SELECT count(*) n FROM exceptions WHERE job_id=? AND status='OPEN'"),
+        "exception_breakdown": exception_breakdown,
+        "decision_breakdown": decision_breakdown,
+        "metadata_writes": count("SELECT count(*) n FROM audit_events WHERE job_id=? AND event='RATING_WRITE' AND ok=1"),
         "failed_audits": count("SELECT count(*) n FROM audit_events WHERE job_id=? AND ok=0"),
     }
+
+
+def write_report(db: Database, job_id: str, filename: str) -> Path:
+    source = Path(db.one("SELECT source_path FROM jobs WHERE id=?", (job_id,))["source_path"])
+    report_path = source / ".actionshots-qa" / job_id / filename
+    report_path.parent.mkdir(parents=True, exist_ok=True)
+    report_path.write_text(json.dumps(build_report(db, job_id), indent=2), encoding="utf-8")
+    return report_path

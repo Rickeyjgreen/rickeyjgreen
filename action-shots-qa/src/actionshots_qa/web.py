@@ -10,11 +10,12 @@ from fastapi import BackgroundTasks, FastAPI, HTTPException
 from fastapi.responses import FileResponse, HTMLResponse
 from pydantic import BaseModel
 
+from . import PIPELINE_VERSION
 from .config import Settings
 from .db import Database, now
 from .hardware import HardwareError, diagnose
 from .models import FaceEngine, ModelPaths
-from .pipeline import analyze_job, build_report, finalize_job
+from .pipeline import analyze_job, build_report, finalize_job, write_report
 
 
 class JobCreate(BaseModel):
@@ -30,7 +31,19 @@ class ResolveRequest(BaseModel):
 
 
 def create_app(db: Database, settings: Settings, model_paths: ModelPaths, exiftool: Path) -> FastAPI:
-    app = FastAPI(title="Action Shots Photo QA", version="0.1.0")
+    app = FastAPI(title="Action Shots Photo QA", version="0.2.0")
+    db.execute(
+        """UPDATE jobs SET status='INTERRUPTED',updated_at=?,
+        error='The prior server stopped before this job finished. Resume it or start a new job.'
+        WHERE status IN ('ANALYZING','WRITING')""",
+        (now(),),
+    )
+    db.execute(
+        """UPDATE jobs SET status='OUTDATED',updated_at=?,
+        error='This job used the old scoring rules. Keep it for reference, but start a new analysis before writing ratings.'
+        WHERE pipeline_version!=? AND status!='COMPLETE'""",
+        (now(), PIPELINE_VERSION),
+    )
 
     @app.get("/", response_class=HTMLResponse)
     def home():
@@ -47,6 +60,9 @@ def create_app(db: Database, settings: Settings, model_paths: ModelPaths, exifto
     def jobs():
         return db.query("""SELECT j.*,
             (SELECT count(*) FROM images i WHERE i.job_id=j.id AND i.analysis_status='DONE') AS processed_images,
+            (SELECT count(*) FROM exceptions e WHERE e.job_id=j.id AND e.status='OPEN') AS open_exceptions,
+            (SELECT count(*) FROM images i WHERE i.job_id=j.id AND i.proposed_rating=5) AS five_star,
+            (SELECT count(*) FROM images i WHERE i.job_id=j.id AND i.proposed_rating=3) AS three_star,
             (SELECT json_extract(a.details_json,'$.total_images') FROM audit_events a
              WHERE a.job_id=j.id AND a.event='IMAGE_DISCOVERY' ORDER BY a.id DESC LIMIT 1) AS total_images
             FROM jobs j ORDER BY j.created_at DESC""")
@@ -79,8 +95,13 @@ def create_app(db: Database, settings: Settings, model_paths: ModelPaths, exifto
             raise HTTPException(404, "Job not found")
         try:
             report = diagnose(require_cuda=True, allow_cpu_fallback=allow_cpu_fallback)
+            FaceEngine(model_paths, report, settings.face_score_threshold,
+                       settings.nms_threshold, settings.top_k)
         except HardwareError as exc:
             raise HTTPException(409, str(exc))
+        except Exception as exc:
+            raise HTTPException(409, f"GPU/model startup check failed: {exc}")
+        db.set_job_status(job_id, "ANALYZING")
         background.add_task(analyze_job, db, job_id, model_paths, report, settings)
         return {"job_id": job_id, "status": "ANALYZING"}
 
@@ -95,10 +116,25 @@ def create_app(db: Database, settings: Settings, model_paths: ModelPaths, exifto
         rows = db.query("SELECT * FROM exceptions WHERE job_id=? AND status='OPEN' ORDER BY id", (job_id,))
         for row in rows:
             ids = json.loads(row["candidate_images_json"])
-            row["candidates"] = db.query(
+            candidates = db.query(
                 f"SELECT i.id,i.relative_path,i.proxy_path,m.portrait_score,m.face_count FROM images i LEFT JOIN image_metrics m ON m.image_id=i.id WHERE i.id IN ({','.join('?' for _ in ids)})",
                 tuple(ids)) if ids else []
+            by_id = {candidate["id"]: candidate for candidate in candidates}
+            row["candidates"] = [by_id[image_id] for image_id in ids if image_id in by_id]
         return rows
+
+    @app.get("/api/jobs/{job_id}/selections")
+    def selections(job_id: str):
+        if not db.one("SELECT id FROM jobs WHERE id=?", (job_id,)):
+            raise HTTPException(404, "Job not found")
+        return db.query(
+            """SELECT i.id,i.relative_path,i.copyright_code,i.proposed_rating,
+            m.portrait_score,m.face_count FROM images i
+            LEFT JOIN image_metrics m ON m.image_id=i.id
+            WHERE i.job_id=? AND i.proposed_rating IN (3,5)
+            ORDER BY i.proposed_rating DESC,i.copyright_code,i.relative_path""",
+            (job_id,),
+        )
 
     @app.get("/api/images/{image_id}/proxy")
     def proxy(image_id: int):
@@ -123,8 +159,11 @@ def create_app(db: Database, settings: Settings, model_paths: ModelPaths, exifto
             if request.image_id not in candidates:
                 raise HTTPException(400, "Group image must be one of the exception candidates")
             db.execute("UPDATE images SET proposed_rating=3 WHERE id=?", (request.image_id,))
+            db.execute("INSERT INTO decisions(job_id,image_id,cluster_id,decision,rating,confidence,reason,source,created_at) VALUES(?,?,?,?,?,?,?,?,?)",
+                       (exception["job_id"], request.image_id, exception["cluster_id"], "GROUP", 3, 1.0, "operator choice", "HUMAN", now()))
         elif request.action == "skip":
-            pass
+            db.execute("INSERT INTO decisions(job_id,image_id,cluster_id,decision,rating,confidence,reason,source,created_at) VALUES(?,?,?,?,?,?,?,?,?)",
+                       (exception["job_id"], request.image_id, exception["cluster_id"], "SKIP", 0, 1.0, "operator accepted unstarred", "HUMAN", now()))
         elif request.action == "split":
             if not exception["cluster_id"] or request.image_id not in candidates:
                 raise HTTPException(400, "Split requires a cluster exception and candidate image")
@@ -150,6 +189,9 @@ def create_app(db: Database, settings: Settings, model_paths: ModelPaths, exifto
                     conn.execute("UPDATE exceptions SET status='RESOLVED',resolution_json=?,updated_at=? WHERE id=?",
                                  (request.model_dump_json(), stamp, exception_id))
             remaining = db.one("SELECT count(*) n FROM exceptions WHERE job_id=? AND status='OPEN'", (exception["job_id"],))["n"]
+            if not remaining:
+                db.set_job_status(exception["job_id"], "READY_TO_WRITE")
+            write_report(db, exception["job_id"], "analysis-report.json")
             return {"ok": True, "remaining": remaining}
         elif request.action == "merge":
             if not exception["cluster_id"] or not request.target_cluster_id:
@@ -164,6 +206,7 @@ def create_app(db: Database, settings: Settings, model_paths: ModelPaths, exifto
         remaining = db.one("SELECT count(*) n FROM exceptions WHERE job_id=? AND status='OPEN'", (exception["job_id"],))["n"]
         if not remaining:
             db.set_job_status(exception["job_id"], "READY_TO_WRITE")
+        write_report(db, exception["job_id"], "analysis-report.json")
         return {"ok": True, "remaining": remaining}
 
     @app.post("/api/jobs/{job_id}/finalize")

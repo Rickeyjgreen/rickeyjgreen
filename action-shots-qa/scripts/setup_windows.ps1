@@ -68,6 +68,14 @@ Get-VerifiedFile -Label "SFace identity model" `
   ) `
   -Sha256 "0ba9fbfa01b5270c96627c4ef784da859931e02f04419c829e83484087c34e79"
 
+Get-VerifiedFile -Label "Facial expression model" `
+  -Path "models\facial_expression_recognition_mobilefacenet_2022july.onnx" `
+  -Urls @(
+    "https://huggingface.co/opencv/opencv_zoo/resolve/main/models/facial_expression_recognition/facial_expression_recognition_mobilefacenet_2022july.onnx?download=true",
+    "https://media.githubusercontent.com/media/opencv/opencv_zoo/main/models/facial_expression_recognition/facial_expression_recognition_mobilefacenet_2022july.onnx"
+  ) `
+  -Sha256 "4f61307602fc089ce20488a31d4e4614e3c9753a7d6c41578c854858b183e1a9"
+
 Get-VerifiedFile -Label "ExifTool 13.59" `
   -Path "models\exiftool.zip" `
   -Urls @(
