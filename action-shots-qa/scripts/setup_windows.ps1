@@ -31,7 +31,7 @@ function Get-VerifiedFile {
     try {
       Write-Host "Downloading $Label..." -ForegroundColor Cyan
       if (Get-Command curl.exe -ErrorAction SilentlyContinue) {
-        & curl.exe --fail --location --silent --show-error --retry 2 `
+        & curl.exe --fail --location --show-error --retry 2 `
           --connect-timeout 20 --max-time 300 --output $partial $url
         if ($LASTEXITCODE -ne 0) { throw "curl.exe exited with code $LASTEXITCODE" }
       } else {
