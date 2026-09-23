@@ -52,3 +52,7 @@ export async function runDealerJob(jobType,dealerIds,{concurrency=3,onProgress=(
 }
 
 export function exportCsv(filename,rows){if(!rows?.length)return false;const keys=[...new Set(rows.flatMap(r=>Object.keys(r)))],esc=v=>`"${String(v??'').replaceAll('"','""')}"`,csv=[keys.map(esc).join(','),...rows.map(r=>keys.map(k=>esc(typeof r[k]==='object'?JSON.stringify(r[k]):r[k])).join(','))].join('\n'),blob=new Blob([csv],{type:'text/csv;charset=utf-8'}),url=URL.createObjectURL(blob),a=document.createElement('a');a.href=url;a.download=filename;document.body.appendChild(a);a.click();a.remove();URL.revokeObjectURL(url);return true}
+
+
+const POC_INTEL_URL=`${PROJECT_URL}/functions/v1/poc-intel-api`
+export function loadPocDashboard(){return callApi(POC_INTEL_URL,{operation:'dashboard'})}
