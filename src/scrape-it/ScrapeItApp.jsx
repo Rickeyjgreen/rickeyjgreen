@@ -1,11 +1,12 @@
 import React,{useEffect,useState} from 'react'
-import {Activity,Building2,CarFront,Radar,RefreshCw,ShieldCheck} from 'lucide-react'
+import {Activity,Building2,CarFront,Database,Radar,RefreshCw,ShieldCheck} from 'lucide-react'
 import {loadDealerState} from './backendClient.mjs'
 import InventoryBrowser from './InventoryBrowser.jsx'
 import MarketExplorer from './MarketExplorer.jsx'
+import POCDashboard from './POCDashboard.jsx'
 
-const hashToScreen=()=>{const h=window.location.hash.replace('#','').toLowerCase();return h==='models'?'MODELS':h==='dealers'?'DEALERS':'PULSE'}
-const screenHash=s=>s==='MODELS'?'#models':s==='DEALERS'?'#dealers':'#pulse'
+const hashToScreen=()=>{const h=window.location.hash.replace('#','').toLowerCase();return h==='models'?'MODELS':h==='dealers'?'DEALERS':h==='poc'?'POC':'PULSE'}
+const screenHash=s=>s==='MODELS'?'#models':s==='DEALERS'?'#dealers':s==='POC'?'#poc':'#pulse'
 
 export default function ScrapeItApp(){
   const [state,setState]=useState({dealers:[],stats:{dealer_count:0,scanned_count:0,vin_count:0}})
@@ -31,6 +32,7 @@ export default function ScrapeItApp(){
       {screen==='PULSE'&&<MarketExplorer dealerState={state} onNavigate={navigate}/>} 
       {screen==='MODELS'&&<InventoryBrowser dealerState={state} intent={browseIntent} fixedTab="MODELS"/>}
       {screen==='DEALERS'&&<InventoryBrowser dealerState={state} intent={browseIntent} fixedTab="DEALERS"/>}
+      {screen==='POC'&&<POCDashboard/>}
       <section className="mb-truth catalog-truth"><ShieldCheck size={15}/><p><strong>Evidence rule:</strong> “removed” means no longer observed on a trusted public scan. It is not automatically a sale or trade.</p></section>
     </main>
 
@@ -38,6 +40,7 @@ export default function ScrapeItApp(){
       <button className={screen==='PULSE'?'active':''} onClick={()=>openScreen('PULSE')}><Activity size={19}/><span>Pulse</span></button>
       <button className={screen==='MODELS'?'active':''} onClick={()=>openScreen('MODELS')}><CarFront size={19}/><span>Models</span></button>
       <button className={screen==='DEALERS'?'active':''} onClick={()=>openScreen('DEALERS')}><Building2 size={19}/><span>Dealers</span></button>
+      <button className={screen==='POC'?'active':''} onClick={()=>openScreen('POC')}><Database size={19}/><span>POC</span></button>
     </nav>
   </div>
 }
