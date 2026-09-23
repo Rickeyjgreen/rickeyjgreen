@@ -96,9 +96,6 @@ function loadRecords(){
 }
 dealerRecords();ownerRecords();loadRecords()
 
-const fileRaw=existing.filter(f=>!['poc_dealers.json','_dealer_owner_map.json','poc_data.json'].includes(f.name))
-for(const f of fileRaw)records.push({type:'dealer',source_file:f.name,source_key:'__FILE_METADATA_ONLY__',observed_at:iso(f.st.mtime),dealer_num:'0',dealer_name:null,payload:{file_metadata_only:true,file:f.name,sha256:f.hash,bytes:f.buf.length}})
-
 const counts=records.reduce((m,r)=>(m[r.type]=(m[r.type]||0)+1,m),{})
 console.log(JSON.stringify({source,observed_at:observedAt,snapshot_hash:snapshotHash,recognized_files:existing.map(x=>x.name),record_counts:counts,dry_run:dry},null,2))
 if(dry)process.exit(0)
