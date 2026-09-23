@@ -38,17 +38,30 @@ Deno.serve(async r=>{
   try{
     const b=await r.json(),records=Array.isArray(b.records)?b.records:[]
     if(records.length>1000)throw Error('Maximum 1000 records per ingest request')
+    const batch_key=clean(b.batch_key)
+    if(!batch_key)throw Error('batch_key is required for retry-safe ingestion')
     const observed_at=iso(b.observed_at),source_label=clean(b.source_label||'POC mirror'),source_kind=clean(b.source_kind||'POC_MIRROR')
     const manifest=safePayload(b.manifest||{}),body_hash=clean(b.body_hash)||await hash(JSON.stringify({source_label,observed_at,manifest}))
     const existing=await d.from('poc_snapshots').select('snapshot_id').eq('source_kind',source_kind).eq('body_hash',body_hash).maybeSingle()
     if(existing.error)throw existing.error
     if(existing.data?.snapshot_id)snapshot_id=existing.data.snapshot_id
     else{const q=await d.from('poc_snapshots').insert({source_kind,source_label,source_path_hint:b.source_path_hint?clean(b.source_path_hint):null,source_modified_at:b.source_modified_at?iso(b.source_modified_at):null,observed_at,body_hash,manifest,snapshot_status:'SNAPSHOT_ONLY'}).select('snapshot_id').single();if(q.error)throw q.error;snapshot_id=q.data.snapshot_id}
+    const batch_hash=await hash(JSON.stringify(records.map(safePayload)))
+    const prior=await d.from('poc_ingest_batches').select('ingest_batch_id,status,records_written,batch_hash').eq('snapshot_id',snapshot_id).eq('batch_key',batch_key).maybeSingle()
+    if(prior.error)throw prior.error
+    if(prior.data){
+      if(prior.data.batch_hash!==batch_hash)throw Error('batch_key collision with different content')
+      if(prior.data.status==='COMPLETE')return J({ok:true,snapshot_id,batch_key,duplicate_batch:true,records_received:records.length,records_written:prior.data.records_written||0})
+      throw Error('Batch already exists but is not complete; manual review required')
+    }
+    const batch=await d.from('poc_ingest_batches').insert({snapshot_id,batch_key,batch_hash,record_count:records.length,status:'RECEIVED'}).select('ingest_batch_id').single()
+    if(batch.error)throw batch.error
     const rawRows=[];for(const rec of records){const raw=JSON.stringify(safePayload(rec));rawRows.push({snapshot_id,record_type:clean(rec.type),source_file:clean(rec.source_file||'UNKNOWN'),source_key:rec.source_key?clean(rec.source_key):null,observed_at:iso(rec.observed_at||observed_at),body_hash:await hash(raw),payload:safePayload(rec)})}
     let rawWritten=0;for(const chunk of batches(rawRows)){if(!chunk.length)continue;const q=await d.from('poc_raw_records').upsert(chunk,{onConflict:'snapshot_id,record_type,source_file,body_hash',ignoreDuplicates:true});if(q.error)throw q.error;rawWritten+=chunk.length}
     const normalized=await normalize(d,snapshot_id,records)
-    await d.from('poc_ingest_events').insert({snapshot_id,event_type:'INGEST_BATCH',status:'COMPLETE',records_received:records.length,records_written:normalized,message:'POC mirror evidence ingested',metadata:{raw_records_attempted:rawWritten}})
-    return J({ok:true,snapshot_id,records_received:records.length,records_written:normalized})
+    await d.from('poc_ingest_batches').update({status:'COMPLETE',records_written:normalized,completed_at:new Date().toISOString()}).eq('snapshot_id',snapshot_id).eq('batch_key',batch_key)
+    await d.from('poc_ingest_events').insert({snapshot_id,event_type:'INGEST_BATCH',status:'COMPLETE',records_received:records.length,records_written:normalized,message:'POC mirror evidence ingested',metadata:{batch_key,raw_records_attempted:rawWritten}})
+    return J({ok:true,snapshot_id,batch_key,records_received:records.length,records_written:normalized})
   }catch(e){
     await d.from('poc_ingest_events').insert({snapshot_id,event_type:'INGEST_BATCH',status:'ERROR',message:e instanceof Error?e.message:String(e)}).catch(()=>{})
     return J({error:e instanceof Error?e.message:String(e)},400)
