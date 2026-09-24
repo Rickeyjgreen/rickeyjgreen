@@ -1,0 +1,38 @@
+name: BYBO cutover one-dealer pilot
+
+on:
+  push:
+    branches: [feat/scrape-it-bybo-cutover]
+    paths:
+      - '.github/workflows/bybo-cutover-pilot.yml'
+      - 'scripts/dealer-browser-scan.mjs'
+      - 'scripts/robots-policy.mjs'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: bybo-cutover-pilot
+  cancel-in-progress: true
+
+jobs:
+  scan:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 12
+    env:
+      DEALER_IDS: '140'
+      SCRAPE_STATIC_TARGETS: '1'
+      SCRAPE_SUPABASE_URL: 'https://ioqdvdsjtzwyjtdkywcu.supabase.co'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '24'
+      - name: Install browser client
+        run: npm install --ignore-scripts --no-audit --no-fund
+      - name: Check crawler tests
+        run: npm test
+      - name: Scan one consent-compatible public dealer site
+        run: node scripts/dealer-browser-scan.mjs

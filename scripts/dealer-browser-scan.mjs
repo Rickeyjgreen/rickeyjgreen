@@ -1,7 +1,10 @@
 import puppeteer from 'puppeteer-core'
+import { readFileSync } from 'node:fs'
+import { loadRobotsPolicy } from './robots-policy.mjs'
 
-const PROJECT_URL='https://eyngapizkxsernywdyfv.supabase.co'
-const PUBLISHABLE_KEY='sb_publishable_Iyht5_rKaUOeHBz9sh0xRQ_eX6r8tfc'
+const PROJECT_URL=process.env.SCRAPE_SUPABASE_URL
+const PUBLISHABLE_KEY=process.env.SCRAPE_SUPABASE_PUBLISHABLE_KEY
+if(!PROJECT_URL||new URL(PROJECT_URL).hostname!=='ioqdvdsjtzwyjtdkywcu.supabase.co')throw Error('This cutover worker requires the Bybo Builds Supabase URL.')
 const STATE_URL=`${PROJECT_URL}/functions/v1/dealer-intel-api`
 const INGEST_URL=`${PROJECT_URL}/functions/v1/dealer-browser-ingest`
 const MAX_PAGES=60,NAV_TIMEOUT=22000,DEALER_TIMEOUT=100000
@@ -79,6 +82,8 @@ async function oidc(){
 }
 
 async function state(){
+  if(process.env.SCRAPE_STATIC_TARGETS==='1')return{dealers:JSON.parse(readFileSync('config/dealer-scan-targets.json','utf8'))}
+  if(!PUBLISHABLE_KEY)throw Error('SCRAPE_SUPABASE_PUBLISHABLE_KEY is required for live state.')
   let e
   for(let i=1;i<=3;i++){
     try{const r=await fetch(STATE_URL,{method:'POST',headers:{apikey:PUBLISHABLE_KEY,'content-type':'application/json'},body:JSON.stringify({operation:'state'}),signal:AbortSignal.timeout(7000)}),d=await r.json();if(r.ok&&!d.error)return d;e=Error(d.error||`state ${r.status}`)}catch(x){e=x}
@@ -87,12 +92,15 @@ async function state(){
   throw e
 }
 
-async function configure(page){
+async function configure(page,robots,website){
   await page.setViewport({width:1280,height:900})
-  await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/152 Safari/537.36')
+  await page.setUserAgent('BYBOInventoryBot/1.0 (+https://elite-market-intelligence.vercel.app/)')
   page.setDefaultNavigationTimeout(NAV_TIMEOUT)
   await page.setRequestInterception(true)
-  page.on('request',r=>['image','media','font'].includes(r.resourceType())?r.abort().catch(()=>{}):r.continue().catch(()=>{}))
+  page.on('request',r=>{
+    const permitted=r.resourceType()==='document'&&same(r.url(),website)&&robots.allows(r.url())
+    return permitted?r.continue().catch(()=>{}):r.abort().catch(()=>{})
+  })
 }
 
 async function expand(page){
@@ -126,12 +134,14 @@ function nextFromHtml(html,current){
   try{const u=new URL(m[1],current).toString();return same(u,current)?u:null}catch{return null}
 }
 
-async function candidate(browser,start,website){
-  const page=await browser.newPage();await configure(page)
+async function candidate(browser,start,website,robots){
+  const page=await browser.newPage();await configure(page,robots,website)
   try{
     const pages=[],seen=new Set(),all=new Map();let current=start,reportedTotal=null,proof=null,p='GENERIC_BROWSER',exhausted=false
     for(let i=0;i<MAX_PAGES;i++){
       if(seen.has(current)){exhausted=true;break}
+      if(!robots.allows(current))throw Error('Robots policy disallows '+current)
+      if(robots.delayMs)await sleep(robots.delayMs)
       seen.add(current)
       let c;try{c=await capture(page,current)}catch(e){if(!pages.length)throw e;break}
       if(!same(c.url,website))throw Error(`Redirected off dealer host: ${c.url}`)
@@ -162,12 +172,13 @@ async function candidate(browser,start,website){
 }
 
 async function scan(browser,dealer){
+  const robots=await loadRobotsPolicy(dealer.website)
   const preferred=dealer.inventory_url?[dealer.inventory_url]:[]
   const base=new URL(dealer.website),paths=['/search/new/tp/','/llm/inventory/?type=new','/searchnew.aspx','/new-inventory/index.htm','/new-vehicles/','/new-inventory/','/inventory/new']
   const urls=[...new Set([...preferred,...paths.map(p=>new URL(p,base).toString())])]
   let best=null
   for(const u of urls){
-    let x;try{x=await candidate(browser,u,dealer.website)}catch{continue}
+    let x;try{x=await candidate(browser,u,dealer.website,robots)}catch(e){if(/Robots policy/.test(String(e.message)))throw e;continue}
     if(!best||x.coverage_status==='COMPLETE'||x.vehicles.length>best.vehicles.length)best=x
     if(x.coverage_status==='COMPLETE')break
   }
