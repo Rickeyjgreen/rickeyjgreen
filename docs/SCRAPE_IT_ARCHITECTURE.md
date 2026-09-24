@@ -1,5 +1,18 @@
 # Scrape It — thin-slice architecture
 
+> Historical first-slice document. The September 24, 2026 BYBO cutover
+> supersedes the project ownership and runtime statements below. The donor
+> project `scrape-it` is retained only as a recoverable archive. New dealer
+> research and contact review belong in the authenticated BYBO workspace,
+> backed by the separate `Bybo Builds` Supabase project. The Vite catalog reads
+> the migrated 29-dealer intelligence subset from BYBO and links to
+> `https://elite-market-intelligence.vercel.app/research` for selected-dealer
+> actions. Donor-era browser/contact HTTP endpoints and scheduled writers are
+> retired rather than pointed at canonical tables without authorization and
+> source-policy checks. Historical rows and raw site captures remain in the
+> donor archive; the Vite catalog is not a complete or real-time dealer-book
+> inventory claim. The original design notes follow for provenance only.
+
 ## Scope implemented
 
 This branch implements only the first vertical slice requested in the handoff:

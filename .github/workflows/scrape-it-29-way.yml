@@ -1,60 +1,15 @@
-name: Scrape It 29 Way
+name: scrape it 29 way (retired donor job)
+
+# No schedule or writer remains on the canonical branch. The donor Supabase
+# project is an archive; BYBO research and the BYBO-only pilot own new scans.
 on:
-  push:
-    branches: [scrape-it]
-    paths:
-      - '.github/workflows/scrape-it-29-way.yml'
-      - 'scripts/dealer-browser-scan.mjs'
-      - 'scripts/dealer-http-edge.mjs'
-      - 'scripts/dealer-inspire-browser.mjs'
-      - 'scripts/dealer-eprocess-http-v2.mjs'
-      - 'config/dealer-scan-targets.json'
   workflow_dispatch:
-  schedule:
-    - cron: '0 2 * * *'
-      timezone: 'America/Chicago'
 
 permissions:
   contents: read
-  id-token: write
-
-concurrency:
-  group: scrape-it-29-way
-  cancel-in-progress: true
 
 jobs:
-  scan:
-    strategy:
-      fail-fast: false
-      max-parallel: 29
-      matrix:
-        dealer: [110,117,140,155,163,164,168,171,188,190,192,199,204,206,218,237,239,263,282,295,304,319,348,358,360,362,370,374,403]
+  retired:
     runs-on: ubuntu-24.04
-    timeout-minutes: 3
-    env:
-      DEALER_IDS: ${{ matrix.dealer }}
-      SCRAPE_IT_BUILD: v11-acquisition-v2
     steps:
-      - uses: actions/checkout@v4
-        with:
-          ref: main
-      - uses: actions/setup-node@v6
-        with:
-          node-version: '24'
-      - name: Direct HTTP platform scan
-        id: http
-        run: node scripts/dealer-http-edge.mjs
-      - name: Dealer eProcess exhaustive HTTP scan
-        id: eprocess
-        if: steps.http.outputs.browser_needed == 'true'
-        run: node scripts/dealer-eprocess-http-v2.mjs
-      - name: Install browser client only for fallback
-        if: steps.http.outputs.browser_needed == 'true' && steps.eprocess.outputs.browser_needed == 'true'
-        run: npm install --ignore-scripts --no-audit --no-fund
-      - name: Exhaustive Dealer Inspire browser pagination
-        id: inspire
-        if: steps.http.outputs.browser_needed == 'true' && steps.eprocess.outputs.browser_needed == 'true'
-        run: node scripts/dealer-inspire-browser.mjs
-      - name: Generic browser fallback only
-        if: steps.http.outputs.browser_needed == 'true' && steps.eprocess.outputs.browser_needed == 'true' && steps.inspire.outputs.browser_needed == 'true'
-        run: node scripts/dealer-browser-scan.mjs
+      - run: echo "Retired donor job. Use the BYBO research workspace."

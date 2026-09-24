@@ -38,3 +38,30 @@ test('active Scrape It catalog has no donor project reference', async () => {
     assert.match(source, /ioqdvdsjtzwyjtdkywcu/)
   }
 })
+
+test('all donor writer workflows and scripts fail closed', async () => {
+  for (const stem of [
+    'scrape-it-29-way',
+    'scrape-it-vin-enrichment',
+    'scrape-it-contacts-weekly',
+    'scrape-it-browser-scan',
+    'scrape-it-browser-scan-fast',
+    'scrape-it-contact-smoke',
+  ]) {
+    const workflow = await readFile(new URL(`../.github/workflows/${stem}.yml`, import.meta.url), 'utf8')
+    assert.doesNotMatch(workflow, /\bschedule\s*:/)
+    assert.match(workflow, /Retired donor job/)
+  }
+  for (const stem of [
+    'enrich-current-vins',
+    'dealer-contact-http',
+    'dealer-http-edge',
+    'dealer-eprocess-http',
+    'dealer-eprocess-http-v2',
+    'dealer-inspire-browser',
+  ]) {
+    const script = await readFile(new URL(`../scripts/${stem}.mjs`, import.meta.url), 'utf8')
+    assert.doesNotMatch(script, /eyngapizkxsernywdyfv/)
+    assert.match(script, /throw new Error\('Legacy donor writer retired/)
+  }
+})

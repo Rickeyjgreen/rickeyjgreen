@@ -1,34 +1,15 @@
-name: Scrape It Weekly Contacts
+name: scrape it contacts weekly (retired donor job)
+
+# No schedule or writer remains on the canonical branch. The donor Supabase
+# project is an archive; BYBO research and the BYBO-only pilot own new scans.
 on:
   workflow_dispatch:
-  schedule:
-    - cron: '0 3 * * 0'
-      timezone: 'America/Chicago'
 
 permissions:
   contents: read
 
-concurrency:
-  group: scrape-it-weekly-contacts
-  cancel-in-progress: true
-
 jobs:
-  refresh:
-    strategy:
-      fail-fast: false
-      max-parallel: 10
-      matrix:
-        dealer: [110,117,140,155,163,164,168,171,188,190,192,199,204,206,218,237,239,263,282,295,304,319,348,358,360,362,370,374,403]
+  retired:
     runs-on: ubuntu-24.04
-    timeout-minutes: 4
-    env:
-      DEALER_IDS: ${{ matrix.dealer }}
     steps:
-      - uses: actions/checkout@v4
-        with:
-          ref: main
-      - uses: actions/setup-node@v6
-        with:
-          node-version: '24'
-      - name: Refresh public decision-maker evidence over direct HTTP
-        run: node scripts/dealer-contact-http.mjs
+      - run: echo "Retired donor job. Use the BYBO research workspace."

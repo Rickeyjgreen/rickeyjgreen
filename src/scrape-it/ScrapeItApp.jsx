@@ -30,6 +30,7 @@ export default function ScrapeItApp(){
     </header>
 
     <main className="mobile-main catalog-main">
+      <div className="catalog-scope-note">This catalog is the 29-dealer observed panel, not Rickey’s full assigned book or a live inventory feed. Check each VIN’s last-observed date before acting; use BYBO research for current selected-dealer work.</div>
       {error&&<div className="di-message di-message-error">{error}</div>}
       {screen==='PULSE'&&<MarketExplorer dealerState={state} onNavigate={navigate}/>} 
       {screen==='MODELS'&&<InventoryBrowser dealerState={state} intent={browseIntent} fixedTab="MODELS"/>}

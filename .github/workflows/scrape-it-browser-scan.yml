@@ -1,40 +1,15 @@
-name: Scrape It Browser Scan
+name: scrape it browser scan (retired donor job)
 
+# No schedule or writer remains on the canonical branch. The donor Supabase
+# project is an archive; BYBO research and the BYBO-only pilot own new scans.
 on:
   workflow_dispatch:
-    inputs:
-      dealer_ids:
-        description: Optional comma-separated dealer IDs. Blank scans the full dealer book.
-        required: false
-        type: string
 
 permissions:
   contents: read
-  id-token: write
-
-concurrency:
-  group: scrape-it-browser-scan
-  cancel-in-progress: true
 
 jobs:
-  scan:
+  retired:
     runs-on: ubuntu-24.04
-    timeout-minutes: 35
-    env:
-      DEALER_IDS: ${{ inputs.dealer_ids }}
     steps:
-      - uses: actions/checkout@v4
-        with:
-          ref: scrape-it
-      - uses: actions/setup-node@v6
-        with:
-          node-version: '24'
-          cache: npm
-      - name: Install pinned browser client
-        run: npm ci --ignore-scripts --no-audit --no-fund
-      - name: Verify browser
-        run: |
-          google-chrome --version
-          node --version
-      - name: Scan dealer book in parallel
-        run: node scripts/dealer-browser-parallel.mjs
+      - run: echo "Retired donor job. Use the BYBO research workspace."
