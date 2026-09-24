@@ -22,7 +22,7 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 12
     env:
-      DEALER_IDS: '140'
+      DEALER_IDS: '163'
       SCRAPE_STATIC_TARGETS: '1'
       SCRAPE_SUPABASE_URL: 'https://ioqdvdsjtzwyjtdkywcu.supabase.co'
     steps:

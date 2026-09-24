@@ -203,8 +203,8 @@ try{
     let result
     try{result=await Promise.race([scan(browser,dealer),new Promise((_,rej)=>setTimeout(()=>rej(Error('Dealer hard timeout')),DEALER_TIMEOUT))])}catch(e){result={dealer_id:dealer.dealer_id,dealer_name:dealer.dealer_name,dealer_website:dealer.website,status:'ERROR',error:e.message}}
     if(result.status!=='ERROR'){try{result.ingest=await ingest(token,result)}catch(e){result.ingest_error=e.message}}
-    summary.push({dealer_id:dealer.dealer_id,dealer_name:dealer.dealer_name,status:result.ingest?.status||result.status,vin_count:result.vehicles?.length||0,reported_total:result.reported_total??null,coverage_proof:result.coverage_proof||null,platform:result.platform||null,pages_scanned:result.pages_scanned||0,elapsed_ms:Date.now()-started,ingest_error:result.ingest_error||null})
+    summary.push({dealer_id:dealer.dealer_id,dealer_name:dealer.dealer_name,status:result.ingest?.status||result.status,vin_count:result.vehicles?.length||0,reported_total:result.reported_total??null,coverage_proof:result.coverage_proof||null,platform:result.platform||null,pages_scanned:result.pages_scanned||0,elapsed_ms:Date.now()-started,error:result.error||null,ingest_error:result.ingest_error||null})
     console.log(summary.at(-1))
   }
 }finally{await browser.close()}
-console.table(summary);console.log(JSON.stringify({summary},null,2));process.exit(0)
+console.table(summary);console.log(JSON.stringify({summary},null,2));process.exit(summary.some(x=>x.status!=='COMPLETE'||x.ingest_error)?1:0)
