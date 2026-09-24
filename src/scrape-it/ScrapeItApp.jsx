@@ -1,5 +1,5 @@
 import React,{useEffect,useState} from 'react'
-import {Activity,Building2,CarFront,Radar,RefreshCw,ShieldCheck} from 'lucide-react'
+import {Activity,ArrowUpRight,Building2,CarFront,Radar,RefreshCw,ShieldCheck} from 'lucide-react'
 import {loadDealerState} from './backendClient.mjs'
 import InventoryBrowser from './InventoryBrowser.jsx'
 import MarketExplorer from './MarketExplorer.jsx'
@@ -23,7 +23,10 @@ export default function ScrapeItApp(){
   return <div className="scrape-it-shell mobile-first-shell catalog-shell">
     <header className="si-header mobile-header catalog-header">
       <div className="si-brand-lockup"><div className="si-brand-mark"><Radar size={17}/></div><div><div className="si-brand"><span>BYBO</span><i>/</i><strong>DEALER PULSE</strong></div><p>Trusted observed inventory</p></div></div>
-      <button className="mb-refresh" onClick={refresh} disabled={refreshing} aria-label="Refresh inventory"><RefreshCw size={17} className={refreshing?'si-spin':''}/></button>
+      <div className="catalog-header-actions">
+        <a className="catalog-research-link" href="https://elite-market-intelligence.vercel.app/research" target="_blank" rel="noopener noreferrer">Run dealer research in BYBO <ArrowUpRight size={15}/></a>
+        <button className="mb-refresh" onClick={refresh} disabled={refreshing} aria-label="Refresh inventory"><RefreshCw size={17} className={refreshing?'si-spin':''}/></button>
+      </div>
     </header>
 
     <main className="mobile-main catalog-main">

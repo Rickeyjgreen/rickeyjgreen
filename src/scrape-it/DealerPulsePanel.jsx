@@ -1,7 +1,7 @@
 import React,{useEffect,useMemo,useState} from 'react'
 import {Activity,AlertTriangle,ArrowUpRight,ChevronDown,Clock3,RefreshCw,ShieldCheck} from 'lucide-react'
 
-const URL='https://eyngapizkxsernywdyfv.supabase.co/functions/v1/dealer-pulse-api'
+const URL=`${(import.meta.env?.VITE_SUPABASE_URL||'https://ioqdvdsjtzwyjtdkywcu.supabase.co').replace(/\/$/,'')}/functions/v1/dealer-pulse-api`
 const fmt=n=>Number(n||0).toFixed(1)
 const pct=n=>`${Math.round(Number(n||0)*100)}%`
 const when=x=>x?new Date(x).toLocaleString():'—'

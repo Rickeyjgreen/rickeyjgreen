@@ -2,7 +2,7 @@ import React,{useEffect,useMemo,useState} from 'react'
 import {Activity,ArrowRight,Building2,CarFront,Map as MapIcon,RefreshCw,Sparkles} from 'lucide-react'
 import {groupInventoryData} from './InventoryBrowser.jsx'
 
-const PULSE_URL='https://eyngapizkxsernywdyfv.supabase.co/functions/v1/dealer-pulse-api'
+const PULSE_URL=`${(import.meta.env?.VITE_SUPABASE_URL||'https://ioqdvdsjtzwyjtdkywcu.supabase.co').replace(/\/$/,'')}/functions/v1/dealer-pulse-api`
 const COLORS=['#111318','#007BFF','#7C8692','#A9B0B8','#D0D4D9','#FF5C00','#5E6B78','#B9C8DA']
 const cap=(items,n=7)=>{const sorted=[...items].sort((a,b)=>b.value-a.value);if(sorted.length<=n)return sorted;const head=sorted.slice(0,n),other=sorted.slice(n).reduce((s,x)=>s+x.value,0);return other?[...head,{name:'Other',value:other,key:'OTHER'}]:head}
 const polar=(cx,cy,r,a)=>({x:cx+r*Math.cos((a-90)*Math.PI/180),y:cy+r*Math.sin((a-90)*Math.PI/180)})

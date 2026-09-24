@@ -1,5 +1,5 @@
-const PROJECT_URL='https://eyngapizkxsernywdyfv.supabase.co'
-const PUBLISHABLE_KEY='sb_publishable_Iyht5_rKaUOeHBz9sh0xRQ_eX6r8tfc'
+const PROJECT_URL=(import.meta.env?.VITE_SUPABASE_URL||'https://ioqdvdsjtzwyjtdkywcu.supabase.co').replace(/\/$/,'')
+const PUBLISHABLE_KEY=import.meta.env?.VITE_SUPABASE_PUBLISHABLE_KEY||'sb_publishable_pDKlAcXntriR1kpsh9lmTg_w3H94PfE'
 const DEALER_API_URL=`${PROJECT_URL}/functions/v1/dealer-intel-api`
 const DEALER_STATE_URL=`${PROJECT_URL}/functions/v1/dealer-intel-state-v2`
 const CONTROL_API_URL=`${PROJECT_URL}/functions/v1/scrape-control-api`
